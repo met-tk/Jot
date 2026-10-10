@@ -1,0 +1,333 @@
+<Page
+    x:Class="Journal.Views.ShellPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Loaded="Page_Loaded">
+
+    <Grid Background="Transparent">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 现代化灵动悬浮胶囊导航岛 (Floating Capsule Navigation Island) -->
+        <Border x:Name="ShellIslandContainer"
+                Grid.Column="0"
+                Width="64"
+                Margin="16,0,12,16"
+                CornerRadius="20"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                Padding="0,12,0,12"
+                VerticalAlignment="Stretch">
+
+            <Grid>
+                <Grid.RowDefinitions>
+                    <!-- 核心功能导航区 (今日/日历/目录/统计) -->
+                    <RowDefinition Height="Auto" />
+                    <!-- 弹性纵向呼吸留白 -->
+                    <RowDefinition Height="*" />
+                    <!-- 底部沉浸设置入口区 -->
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- 核心功能导航区 -->
+                <StackPanel Grid.Row="0"
+                            Orientation="Vertical"
+                            Spacing="8"
+                            HorizontalAlignment="Center">
+
+                    <!-- 1. 今日随记 (Today) -->
+                    <Button x:Name="NavBtnToday"
+                            Click="NavButton_Click"
+                            Tag="Today"
+                            Style="{ThemeResource SubtleButtonStyle}"
+                            Width="44"
+                            Height="44"
+                            Padding="0"
+                            CornerRadius="14"
+                            HorizontalAlignment="Center"
+                            ToolTipService.ToolTip="今日 (Ctrl+1)">
+                        <Button.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="Number1" Modifiers="Control" />
+                        </Button.KeyboardAccelerators>
+                        <Grid Width="44" Height="44">
+                            <Border x:Name="BgToday"
+                                    CornerRadius="14"
+                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    Visibility="Visible" />
+                            <Border x:Name="IndicatorToday"
+                                    Width="3"
+                                    Height="16"
+                                    CornerRadius="1.5"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Margin="3,0,0,0"
+                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                    Visibility="Visible" />
+                            <FontIcon x:Name="IconTodayNormal"
+                                      Glyph="&#xE70F;"
+                                      FontSize="18"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Visibility="Collapsed" />
+                            <FontIcon x:Name="IconTodayActive"
+                                      Glyph="&#xE70F;"
+                                      FontSize="18"
+                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Visibility="Visible" />
+                        </Grid>
+                    </Button>
+
+                    <!-- 2. 日历视图 (Calendar) -->
+                    <Button x:Name="NavBtnCalendar"
+                            Click="NavButton_Click"
+                            Tag="Calendar"
+                            Style="{ThemeResource SubtleButtonStyle}"
+                            Width="44"
+                            Height="44"
+                            Padding="0"
+                            CornerRadius="14"
+                            HorizontalAlignment="Center"
+                            ToolTipService.ToolTip="日历 (Ctrl+2)">
+                        <Button.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="Number2" Modifiers="Control" />
+                        </Button.KeyboardAccelerators>
+                        <Grid Width="44" Height="44">
+                            <Border x:Name="BgCalendar"
+                                    CornerRadius="14"
+                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    Visibility="Collapsed" />
+                            <Border x:Name="IndicatorCalendar"
+                                    Width="3"
+                                    Height="16"
+                                    CornerRadius="1.5"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Margin="3,0,0,0"
+                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                    Visibility="Collapsed" />
+                            <FontIcon x:Name="IconCalendarNormal"
+                                      Glyph="&#xE787;"
+                                      FontSize="18"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Visibility="Visible" />
+                            <FontIcon x:Name="IconCalendarActive"
+                                      Glyph="&#xE787;"
+                                      FontSize="18"
+                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Visibility="Collapsed" />
+                        </Grid>
+                    </Button>
+
+                    <!-- 3. 目录列表 (List) -->
+                    <Button x:Name="NavBtnList"
+                            Click="NavButton_Click"
+                            Tag="List"
+                            Style="{ThemeResource SubtleButtonStyle}"
+                            Width="44"
+                            Height="44"
+                            Padding="0"
+                            CornerRadius="14"
+                            HorizontalAlignment="Center"
+                            ToolTipService.ToolTip="目录 (Ctrl+3)">
+                        <Button.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="Number3" Modifiers="Control" />
+                        </Button.KeyboardAccelerators>
+                        <Grid Width="44" Height="44">
+                            <Border x:Name="BgList"
+                                    CornerRadius="14"
+                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    Visibility="Collapsed" />
+                            <Border x:Name="IndicatorList"
+                                    Width="3"
+                                    Height="16"
+                                    CornerRadius="1.5"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Margin="3,0,0,0"
+                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                    Visibility="Collapsed" />
+                            <FontIcon x:Name="IconListNormal"
+                                      Glyph="&#xE8F1;"
+                                      FontSize="18"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Visibility="Visible" />
+                            <FontIcon x:Name="IconListActive"
+                                      Glyph="&#xE8F1;"
+                                      FontSize="18"
+                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Visibility="Collapsed" />
+                        </Grid>
+                    </Button>
+
+                    <!-- 4. 数据统计 (Analytics) -->
+                    <Button x:Name="NavBtnAnalytics"
+                            Click="NavButton_Click"
+                            Tag="Analytics"
+                            Style="{ThemeResource SubtleButtonStyle}"
+                            Width="44"
+                            Height="44"
+                            Padding="0"
+                            CornerRadius="14"
+                            HorizontalAlignment="Center"
+                            ToolTipService.ToolTip="统计 (Ctrl+4)">
+                        <Button.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="Number4" Modifiers="Control" />
+                        </Button.KeyboardAccelerators>
+                        <Grid Width="44" Height="44">
+                            <Border x:Name="BgAnalytics"
+                                    CornerRadius="14"
+                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    Visibility="Collapsed" />
+                            <Border x:Name="IndicatorAnalytics"
+                                    Width="3"
+                                    Height="16"
+                                    CornerRadius="1.5"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Margin="3,0,0,0"
+                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                    Visibility="Collapsed" />
+                            <FontIcon x:Name="IconAnalyticsNormal"
+                                      Glyph="&#xE9D2;"
+                                      FontSize="18"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Visibility="Visible" />
+                            <FontIcon x:Name="IconAnalyticsActive"
+                                      Glyph="&#xE9D2;"
+                                      FontSize="18"
+                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Visibility="Collapsed" />
+                        </Grid>
+                    </Button>
+
+                    <!-- 5. 导入日记 (Import) -->
+                    <Button x:Name="NavBtnImport"
+                            Click="NavButton_Click"
+                            Tag="Import"
+                            Style="{ThemeResource SubtleButtonStyle}"
+                            Width="44"
+                            Height="44"
+                            Padding="0"
+                            CornerRadius="14"
+                            HorizontalAlignment="Center"
+                            ToolTipService.ToolTip="导入 (Ctrl+5)">
+                        <Button.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="Number5" Modifiers="Control" />
+                        </Button.KeyboardAccelerators>
+                        <Grid Width="44" Height="44">
+                            <Border x:Name="BgImport"
+                                    CornerRadius="14"
+                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    Visibility="Collapsed" />
+                            <Border x:Name="IndicatorImport"
+                                    Width="3"
+                                    Height="16"
+                                    CornerRadius="1.5"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Margin="3,0,0,0"
+                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                    Visibility="Collapsed" />
+                            <FontIcon x:Name="IconImportNormal"
+                                      Glyph="&#xE8B5;"
+                                      FontSize="18"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Visibility="Visible" />
+                            <FontIcon x:Name="IconImportActive"
+                                      Glyph="&#xE8B5;"
+                                      FontSize="18"
+                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Visibility="Collapsed" />
+                        </Grid>
+                    </Button>
+                </StackPanel>
+
+                <!-- 底部设置入口区 -->
+                <StackPanel Grid.Row="2"
+                            Orientation="Vertical"
+                            Spacing="10"
+                            HorizontalAlignment="Center">
+                    <Border Width="28"
+                            Height="1"
+                            Background="{ThemeResource DividerStrokeColorDefaultBrush}"
+                            HorizontalAlignment="Center" />
+
+                    <!-- 6. 沉浸设置 (Settings) -->
+                    <Button x:Name="NavBtnSettings"
+                            Click="NavButton_Click"
+                            Tag="Settings"
+                            Style="{ThemeResource SubtleButtonStyle}"
+                            Width="44"
+                            Height="44"
+                            Padding="0"
+                            CornerRadius="14"
+                            HorizontalAlignment="Center"
+                            ToolTipService.ToolTip="设置 (Ctrl+6)">
+                        <Button.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="Number6" Modifiers="Control" />
+                        </Button.KeyboardAccelerators>
+                        <Grid Width="44" Height="44">
+                            <Border x:Name="BgSettings"
+                                    CornerRadius="14"
+                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    Visibility="Collapsed" />
+                            <Border x:Name="IndicatorSettings"
+                                    Width="3"
+                                    Height="16"
+                                    CornerRadius="1.5"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Margin="3,0,0,0"
+                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                    Visibility="Collapsed" />
+                            <FontIcon x:Name="IconSettingsNormal"
+                                      Glyph="&#xE713;"
+                                      FontSize="18"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Visibility="Visible" />
+                            <FontIcon x:Name="IconSettingsActive"
+                                      Glyph="&#xE713;"
+                                      FontSize="18"
+                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Visibility="Collapsed" />
+                        </Grid>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 页面主视图承载容器 -->
+        <Frame x:Name="ContentFrame"
+               Grid.Column="1"
+               Margin="0,0,16,16" />
+    </Grid>
+</Page>

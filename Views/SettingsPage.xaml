@@ -1,0 +1,428 @@
+<Page
+    x:Class="Journal.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:viewmodels="using:Journal.ViewModels"
+    mc:Ignorable="d">
+
+    <Grid Background="Transparent">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- 页面顶部标题栏 -->
+        <Border Padding="28,20,28,16" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="4">
+                <TextBlock Text="设置中心" FontSize="22" FontWeight="SemiBold"
+                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                <TextBlock Text="个性化音效、书写动效、排版字体与窗口外观" FontSize="13"
+                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+            </StackPanel>
+        </Border>
+
+        <!-- 设置卡片容器列表（自适应窗口宽度铺展） -->
+        <ScrollViewer Grid.Row="1" Padding="24,20,24,40" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel HorizontalAlignment="Stretch" Spacing="16">
+
+                <!-- 1. 声音与物理音效 -->
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                        CornerRadius="8" Padding="20,18">
+                    <StackPanel Spacing="16">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <FontIcon Glyph="&#xE767;" FontSize="16" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
+                                    <TextBlock Text="打字音效" FontSize="15" FontWeight="SemiBold"/>
+                                </StackPanel>
+                                <TextBlock Text="键盘输入与回车换行时播放物理敲击声"
+                                           FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Margin="24,0,0,0"/>
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ViewModel.IsSoundEnabled, Mode=TwoWay}"
+                                          OnContent="开启" OffContent="静音"/>
+                        </Grid>
+
+                        <StackPanel Visibility="{x:Bind ViewModel.IsSoundEnabled, Mode=OneWay}" Spacing="16" Margin="0,4,0,0">
+                            <!-- 键盘轴体音色选择 -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="音效主题" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
+                                <ComboBox Grid.Column="1" MinWidth="220"
+                                          ItemsSource="{x:Bind ViewModel.AvailableSoundThemeOptions, Mode=OneWay}"
+                                          DisplayMemberPath="Title"
+                                          SelectedValuePath="Id"
+                                          SelectedValue="{x:Bind ViewModel.SelectedTheme, Mode=TwoWay}"/>
+                            </Grid>
+
+                            <!-- 音量调节与试听按钮组 -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="220"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="音效音量" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                    <Slider Minimum="0" Maximum="100" StepFrequency="1" Width="140"
+                                            Value="{x:Bind ViewModel.SoundVolumePercent, Mode=TwoWay}"/>
+                                    <TextBlock Text="{x:Bind ViewModel.SoundVolumePercent, Mode=OneWay}" VerticalAlignment="Center"
+                                               Width="32" FontSize="12" FontWeight="SemiBold"/>
+                                    <TextBlock Text="%" VerticalAlignment="Center" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
+                                <Button Content="试听敲击音" Style="{ThemeResource SubtleButtonStyle}" Padding="12,6"
+                                        Command="{x:Bind ViewModel.PreviewKeySoundCommand}"/>
+                                <Button Content="试听回车音" Style="{ThemeResource SubtleButtonStyle}" Padding="12,6"
+                                        Command="{x:Bind ViewModel.PreviewEnterSoundCommand}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- 2. 拟物手感与触觉动效 -->
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                        CornerRadius="8" Padding="20,18">
+                    <StackPanel Spacing="16">
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE945;" FontSize="16" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
+                            <TextBlock Text="书写反馈" FontSize="15" FontWeight="SemiBold"/>
+                        </StackPanel>
+
+                        <!-- 字纸轻微震动反馈 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="纸面回弹动效" FontSize="13" FontWeight="Medium"/>
+                                <TextBlock Text="输入时纸面轻微位移"
+                                           FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ViewModel.IsHapticVibrationEnabled, Mode=TwoWay}"
+                                          OnContent="开启" OffContent="关闭"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- 3. 排版与字体定制 -->
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                        CornerRadius="8" Padding="20,18">
+                    <StackPanel Spacing="16">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xE8D2;" FontSize="16" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
+                                <TextBlock Text="排版与字体" FontSize="15" FontWeight="SemiBold"/>
+                            </StackPanel>
+                            <Button Grid.Column="1" Style="{ThemeResource SubtleButtonStyle}" Padding="10,5"
+                                    Command="{x:Bind ViewModel.ResetFontSettingsCommand}"
+                                    ToolTipService.ToolTip="恢复默认字体、字号与行距">
+                                <StackPanel Orientation="Horizontal" Spacing="5">
+                                    <FontIcon Glyph="&#xE777;" FontSize="12"/>
+                                    <TextBlock Text="恢复默认字体" FontSize="12"/>
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <!-- 书写正文字体选择 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="编辑器正文字体" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
+                            <ComboBox Grid.Column="1" MinWidth="220"
+                                      ItemsSource="{x:Bind ViewModel.AvailableFontFamilies, Mode=OneWay}"
+                                      SelectedItem="{x:Bind ViewModel.SelectedFontFamily, Mode=TwoWay}"/>
+                        </Grid>
+
+                        <!-- 全局界面 UI 字体选择 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="全局界面显示字体" FontSize="13" FontWeight="Medium"/>
+                                <TextBlock Text="侧边栏、卡片、日历等非编辑器界面"
+                                           FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" MinWidth="220"
+                                      ItemsSource="{x:Bind ViewModel.AvailableFontFamilies, Mode=OneWay}"
+                                      SelectedItem="{x:Bind ViewModel.SelectedUiFontFamily, Mode=TwoWay}"/>
+                        </Grid>
+
+                        <!-- 字号调节 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="220"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="正文字号" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <Slider Minimum="12" Maximum="24" StepFrequency="1" Width="140"
+                                        Value="{x:Bind ViewModel.FontSize, Mode=TwoWay}"/>
+                                <TextBlock Text="{x:Bind ViewModel.FontSize, Mode=OneWay}" VerticalAlignment="Center"
+                                           Width="24" FontSize="12" FontWeight="SemiBold"/>
+                                <TextBlock Text="px" VerticalAlignment="Center" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- 行距调节 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="220"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="正文行距" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <Slider Minimum="1.2" Maximum="2.2" StepFrequency="0.1" Width="140"
+                                        Value="{x:Bind ViewModel.LineSpacing, Mode=TwoWay}"/>
+                                <TextBlock Text="{x:Bind ViewModel.LineSpacing, Mode=OneWay}" VerticalAlignment="Center"
+                                           Width="30" FontSize="12" FontWeight="SemiBold"/>
+                                <TextBlock Text="倍" VerticalAlignment="Center" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- 动态排版预览卡片 -->
+                        <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                                CornerRadius="6" Padding="18,14" Margin="0,4,0,0">
+                            <StackPanel Spacing="8">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="效果预览" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                                        <Button Content="文言" Style="{ThemeResource SubtleButtonStyle}" Padding="8,3" FontSize="11"
+                                                Command="{x:Bind ViewModel.SetPreviewAncientCommand}"/>
+                                        <Button Content="现代" Style="{ThemeResource SubtleButtonStyle}" Padding="8,3" FontSize="11"
+                                                Command="{x:Bind ViewModel.SetPreviewModernCommand}"/>
+                                        <Button Content="英文" Style="{ThemeResource SubtleButtonStyle}" Padding="8,3" FontSize="11"
+                                                Command="{x:Bind ViewModel.SetPreviewEnglishCommand}"/>
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock x:Name="TypographyPreviewText"
+                                           Text="{x:Bind ViewModel.SamplePreviewText, Mode=OneWay}"
+                                           FontFamily="{x:Bind ViewModel.PreviewFontFamily, Mode=OneWay}"
+                                           FontSize="{x:Bind ViewModel.FontSize, Mode=OneWay}"
+                                           LineHeight="{x:Bind ViewModel.PreviewLineHeight, Mode=OneWay}"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- 4. 窗口材质与沉浸透度 -->
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                        CornerRadius="8" Padding="20,18">
+                    <StackPanel Spacing="16">
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE790;" FontSize="16" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
+                            <TextBlock Text="窗口材质与氛围" FontSize="15" FontWeight="SemiBold"/>
+                        </StackPanel>
+
+                        <!-- 系统材质切换 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="系统材质" FontSize="13" FontWeight="Medium"/>
+                                <TextBlock Text="毛玻璃与云母需在 Windows 系统设置中开启透明效果"
+                                           FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" MinWidth="220"
+                                      ItemsSource="{x:Bind ViewModel.AvailableBackdropOptions, Mode=OneWay}"
+                                      DisplayMemberPath="Title"
+                                      SelectedValuePath="Id"
+                                      SelectedValue="{x:Bind ViewModel.SelectedBackdrop, Mode=TwoWay}"/>
+                        </Grid>
+
+                        <!-- 沉浸氛围风格选择 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="氛围色调" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
+                            <ComboBox Grid.Column="1" MinWidth="220"
+                                      ItemsSource="{x:Bind ViewModel.AvailableAmbianceOptions, Mode=OneWay}"
+                                      DisplayMemberPath="Title"
+                                      SelectedValuePath="Id"
+                                      SelectedValue="{x:Bind ViewModel.SelectedAmbiance, Mode=TwoWay}"/>
+                        </Grid>
+
+                        <!-- 背景沉浸度/遮罩滑块 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="220"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="氛围底色浓度" FontSize="13" FontWeight="Medium"/>
+                                <TextBlock Text="调整背景底色深浅"
+                                           FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <Slider Minimum="0" Maximum="90" StepFrequency="1" Width="140"
+                                        Value="{x:Bind ViewModel.BackgroundTintOpacityPercent, Mode=TwoWay}"/>
+                                <TextBlock Text="{x:Bind ViewModel.BackgroundTintOpacityPercent, Mode=OneWay}" VerticalAlignment="Center"
+                                           Width="24" FontSize="12" FontWeight="SemiBold"/>
+                                <TextBlock Text="%" VerticalAlignment="Center" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- 状态卡片 -->
+                        <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                                CornerRadius="6" Padding="18,14" Margin="0,4,0,0">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="当前外观" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="{x:Bind ViewModel.MaterialPreviewSummary, Mode=OneWay}"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- 5. 数据存储与关于 -->
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                        CornerRadius="8" Padding="20,18">
+                    <StackPanel Spacing="16">
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE8B7;" FontSize="16" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
+                            <TextBlock Text="数据存储与快捷键" FontSize="15" FontWeight="SemiBold"/>
+                        </StackPanel>
+
+                        <!-- 本地存储目录 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="数据存储目录" FontSize="13" FontWeight="Medium"/>
+                                <TextBlock Text="{x:Bind ViewModel.StorageDirectoryPath, Mode=OneWay}"
+                                           FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           IsTextSelectionEnabled="True"/>
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="打开目录" Style="{ThemeResource SubtleButtonStyle}" Padding="12,6"
+                                    Command="{x:Bind ViewModel.OpenStorageFolderCommand}"/>
+                        </Grid>
+
+                        <!-- 导入外部日记 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="导入外部日记" FontSize="13" FontWeight="Medium"/>
+                                <TextBlock Text="支持从 Markdown (.md)、纯文本 (.txt)、JSON 或 ZIP 压缩包批量导入并智能识别日期与多段合并"
+                                           FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="前往导入工作台" Style="{ThemeResource AccentButtonStyle}" Padding="12,6"
+                                    Click="ImportDiaries_Click"/>
+                        </Grid>
+
+                        <MenuFlyoutSeparator Margin="0,-4,0,-4"/>
+
+                        <!-- 快捷键速查 -->
+                        <Grid ColumnSpacing="20" RowSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="• Ctrl+1 ~ 6：切换今日/日历/目录/统计/导入/设置" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="• Ctrl+T：追加当前时间戳" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="• Ctrl+S：立即保存日记" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="• 鼠标侧键：前进 / 后退视图与页面" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="• Ctrl+Z：撤回上一步输入" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Grid.Row="2" Grid.Column="1" Text="• Ctrl+Shift+Z：撤销撤回（重做）" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </Grid>
+
+                        <MenuFlyoutSeparator Margin="0,-2,0,-2"/>
+
+                        <!-- 版本号、制作人与问题反馈 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="8">
+                                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                    <TextBlock Text="AI-Driven by Taketo"
+                                               FontSize="13" FontWeight="SemiBold"
+                                               Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                               VerticalAlignment="Center"/>
+                                    <HyperlinkButton Content="找我玩"
+                                                     FontSize="13" FontWeight="Medium"
+                                                     Padding="6,2"
+                                                     VerticalAlignment="Center"
+                                                     ToolTipService.ToolTip="https://space.bilibili.com/24340298"
+                                                     Click="AuthorLink_Click"/>
+                                </StackPanel>
+
+                                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <TextBlock Text="问题反馈与联系:"
+                                               FontSize="13"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               VerticalAlignment="Center"/>
+                                    <Button Content="yunotaketo@gmail.com"
+                                            FontSize="12.5"
+                                            Padding="10,4"
+                                            CornerRadius="6"
+                                            Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            VerticalAlignment="Center"
+                                            ToolTipService.ToolTip="点击调用邮箱发送邮件至 yunotaketo@gmail.com"
+                                            Click="FeedbackEmail_Click"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" VerticalAlignment="Bottom" HorizontalAlignment="Right">
+                                <TextBlock Text="{x:Bind ViewModel.AppVersionText, Mode=OneWay}"
+                                           FontSize="12" FontWeight="Medium"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           HorizontalAlignment="Right"/>
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

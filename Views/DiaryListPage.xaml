@@ -1,0 +1,462 @@
+<Page
+    x:Class="Journal.Views.DiaryListPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:viewmodels="using:Journal.ViewModels"
+    xmlns:models="using:Journal.Models"
+    xmlns:local="using:Journal.Views"
+    mc:Ignorable="d">
+
+    <Grid Padding="24,18,24,20" RowSpacing="14" Background="Transparent">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- 1. 顶部操作栏：大标题与搜索框、多选开关 -->
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- 标题与篇数计数 -->
+            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <FontIcon Glyph="&#xE8F1;" FontSize="20" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                <TextBlock Text="目录时间线" FontSize="22" FontWeight="Bold"/>
+                <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                        CornerRadius="10" Padding="8,2" VerticalAlignment="Center" Margin="6,0,0,0">
+                    <TextBlock Text="{x:Bind ViewModel.TotalEntriesCount, Mode=OneWay}" FontSize="12"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                </Border>
+            </StackPanel>
+
+            <!-- 右侧操作栏：多选开关 + 搜索输入框 -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <!-- 多选模式切换按钮 -->
+                <ToggleButton x:Name="MultiSelectToggleBtn"
+                              Padding="10,6"
+                              IsChecked="{x:Bind ViewModel.IsMultiSelectMode, Mode=TwoWay}"
+                              ToolTipService.ToolTip="开启/退出多选模式，支持批量导出与批量管理">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE762;" FontSize="13"/>
+                        <TextBlock Text="多选管理" FontSize="12"/>
+                    </StackPanel>
+                </ToggleButton>
+
+                <!-- 搜索框 -->
+                <AutoSuggestBox PlaceholderText="搜索日记内容或日期..."
+                                QueryIcon="Find"
+                                MinWidth="130" MaxWidth="240"
+                                Text="{x:Bind ViewModel.SearchKeyword, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- 2. 多选模式吸顶操作控制条 (仅多选模式下激活，弹性防裁切设计) -->
+        <Border Grid.Row="1"
+                Visibility="{x:Bind local:DiaryListPage.GetVisibility(ViewModel.IsMultiSelectMode), Mode=OneWay}"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="10"
+                Padding="14,8">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- 选中计数胶囊 (清透高对比度翡翠微透胶囊，杜绝深底深字撞色) -->
+                <Border Grid.Column="0"
+                        Background="{ThemeResource AppBadgeBackgroundBrush}"
+                        BorderBrush="{ThemeResource AppBadgeBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="10,5"
+                        VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                        <FontIcon Glyph="&#xE73E;" FontSize="11"
+                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                        <TextBlock Text="{x:Bind local:DiaryListPage.GetSelectionBadgeText(ViewModel.SelectedCardsCount, ViewModel.SelectedTotalWords), Mode=OneWay}"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- 批量选择与操作快捷按钮 (置于横向平滑滚动容器中，确保窄屏下完整可达不被截断) -->
+                <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                              HorizontalAlignment="Right">
+                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="0,0,2,0">
+                        <Button Content="全选" FontSize="12" Padding="10,4"
+                                Style="{ThemeResource DefaultButtonStyle}" CornerRadius="6"
+                                Command="{x:Bind ViewModel.SelectAllCommand}"/>
+                        <Button Content="全不选" FontSize="12" Padding="10,4"
+                                Style="{ThemeResource DefaultButtonStyle}" CornerRadius="6"
+                                Command="{x:Bind ViewModel.UnselectAllCommand}"/>
+                        <Button Content="反选" FontSize="12" Padding="10,4"
+                                Style="{ThemeResource DefaultButtonStyle}" CornerRadius="6"
+                                Command="{x:Bind ViewModel.InvertSelectionCommand}"/>
+
+                        <!-- 垂直分割线 (替代原误用的水平 MenuFlyoutSeparator) -->
+                        <Border Width="1" Height="18" Background="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="4,0" VerticalAlignment="Center"/>
+
+                        <!-- 批量导出按钮 -->
+                        <Button Style="{ThemeResource AccentButtonStyle}" FontSize="12" Padding="12,5" CornerRadius="6"
+                                Click="BatchExport_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <FontIcon Glyph="&#xEDE1;" FontSize="11"/>
+                                <TextBlock Text="批量导出..."/>
+                            </StackPanel>
+                            <Button.Flyout>
+                                <MenuFlyout>
+                                    <MenuFlyoutItem Text="Markdown 批量导出 (.md)" Click="ExportBatchMarkdown_Click">
+                                        <MenuFlyoutItem.Icon>
+                                            <FontIcon Glyph="&#xE8A5;"/>
+                                        </MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                    <MenuFlyoutItem Text="TXT 纯文本批量 (.txt)" Click="ExportBatchTxt_Click">
+                                        <MenuFlyoutItem.Icon>
+                                            <FontIcon Glyph="&#xE8A4;"/>
+                                        </MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                    <MenuFlyoutItem Text="JSON 结构化数据 (.json)" Click="ExportBatchJson_Click">
+                                        <MenuFlyoutItem.Icon>
+                                            <FontIcon Glyph="&#xE943;"/>
+                                        </MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                </MenuFlyout>
+                            </Button.Flyout>
+                        </Button>
+
+                        <!-- 批量删除按钮 (带柔和绯红底色与清晰细边框) -->
+                        <Button Background="#14E11D48"
+                                BorderBrush="#50E11D48"
+                                BorderThickness="1"
+                                FontSize="12" Padding="10,4" CornerRadius="6"
+                                Click="BatchDelete_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <FontIcon Glyph="&#xE74D;" FontSize="11" Foreground="#E11D48"/>
+                                <TextBlock Text="批量删除" Foreground="#E11D48" FontWeight="SemiBold"/>
+                            </StackPanel>
+                        </Button>
+
+                        <!-- 退出多选按钮 -->
+                        <Button Style="{ThemeResource DefaultButtonStyle}" FontSize="12" Padding="10,4" CornerRadius="6"
+                                ToolTipService.ToolTip="退出多选管理"
+                                Command="{x:Bind ViewModel.ExitMultiSelectModeCommand}">
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <FontIcon Glyph="&#xE711;" FontSize="10"/>
+                                <TextBlock Text="退出"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+
+        <!-- 3. 主体区域：双栏联动（左侧时间线/只读阅读层，右侧日历辅助视图） -->
+        <Grid Grid.Row="2" ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition x:Name="CalendarPanelCol" Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- 1. 左侧：真实日记卡片时间线（当未处于单日只读阅读时呈现，右侧预留 14px 呼吸间距避免滚动条贴边） -->
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="0,0,14,0"
+                          Visibility="{x:Bind local:DiaryListPage.GetInverseVisibility(ViewModel.IsReadingDay), Mode=OneWay}">
+                <Grid HorizontalAlignment="Stretch">
+                    <!-- 空状态提示 -->
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,80,0,0" Spacing="10"
+                                Visibility="{x:Bind local:DiaryListPage.GetEmptyVisibility(ViewModel.TotalEntriesCount), Mode=OneWay}">
+                        <FontIcon Glyph="&#xE8F1;" FontSize="36" Opacity="0.3" HorizontalAlignment="Center"/>
+                        <TextBlock Text="暂无书写记录，开始写下第一篇日记吧" FontSize="14" Opacity="0.6" HorizontalAlignment="Center"/>
+                    </StackPanel>
+
+                    <!-- 分组卡片列表 -->
+                    <ItemsControl ItemsSource="{x:Bind ViewModel.Groups, Mode=OneWay}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="models:DiaryGroupItem">
+                                <StackPanel Spacing="10" Margin="0,0,0,20">
+                                    <!-- 分组吸顶标头 -->
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="4,0,0,4">
+                                        <FontIcon Glyph="&#xED28;" FontSize="13" Opacity="0.5"/>
+                                        <TextBlock Text="{x:Bind GroupName}" FontSize="15" FontWeight="SemiBold" Opacity="0.85"/>
+                                    </StackPanel>
+
+                                    <!-- 当月卡片列表 -->
+                                    <ItemsControl ItemsSource="{x:Bind Entries}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="models:DiaryCardItem">
+                                                <Grid Margin="0,0,0,8">
+                                                    <!-- 主卡片容器：直接使用原生主题画刷，深浅主题 100% 自动自洽且零崩溃 -->
+                                                    <Border Padding="14,12" CornerRadius="8"
+                                                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                            BorderThickness="1"
+                                                            Tag="{x:Bind}"
+                                                            Loaded="DiaryCard_Loaded"
+                                                            Unloaded="DiaryCard_Unloaded"
+                                                            PointerPressed="DiaryCard_PointerPressed"
+                                                            ContextRequested="DiaryCard_ContextRequested">
+                                                        <!-- 右键快捷菜单 (MenuFlyout，不绑定内嵌 x:Bind 以根除虚拟化卸载崩溃) -->
+                                                        <Border.ContextFlyout>
+                                                            <MenuFlyout>
+                                                                <MenuFlyoutItem Text="编辑日记" Click="MenuEdit_Click">
+                                                                    <MenuFlyoutItem.Icon>
+                                                                        <FontIcon Glyph="&#xE70F;"/>
+                                                                    </MenuFlyoutItem.Icon>
+                                                                </MenuFlyoutItem>
+                                                                <MenuFlyoutItem Text="复制内容" Click="MenuCopy_Click">
+                                                                    <MenuFlyoutItem.Icon>
+                                                                        <FontIcon Glyph="&#xE8C8;"/>
+                                                                    </MenuFlyoutItem.Icon>
+                                                                </MenuFlyoutItem>
+                                                                <MenuFlyoutSeparator/>
+                                                                <MenuFlyoutItem Text="删除日记" Click="MenuDelete_Click" Foreground="#E11D48">
+                                                                    <MenuFlyoutItem.Icon>
+                                                                        <FontIcon Glyph="&#xE74D;" Foreground="#E11D48"/>
+                                                                    </MenuFlyoutItem.Icon>
+                                                                </MenuFlyoutItem>
+                                                            </MenuFlyout>
+                                                        </Border.ContextFlyout>
+
+                                                        <Grid ColumnSpacing="14">
+                                                            <Grid.ColumnDefinitions>
+                                                                <!-- 多选 CheckBox 列 (多选模式下显示) -->
+                                                                <ColumnDefinition Width="Auto"/>
+                                                                <ColumnDefinition Width="68"/>
+                                                                <ColumnDefinition Width="*"/>
+                                                            </Grid.ColumnDefinitions>
+
+                                                            <!-- 多选复选框 -->
+                                                            <CheckBox Grid.Column="0"
+                                                                      IsChecked="{x:Bind IsSelected, Mode=TwoWay}"
+                                                                      Visibility="{x:Bind local:DiaryListPage.GetVisibility(IsMultiSelectVisible), Mode=OneWay}"
+                                                                      VerticalAlignment="Center" Margin="0,0,4,0"/>
+
+                                                            <!-- 左侧：大字号日期指示胶囊 -->
+                                                            <Border Grid.Column="1"
+                                                                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                                    CornerRadius="6" Padding="6,8" VerticalAlignment="Center">
+                                                                <StackPanel HorizontalAlignment="Center">
+                                                                    <TextBlock Text="{x:Bind DayString}" FontSize="20" FontWeight="Bold"
+                                                                               HorizontalAlignment="Center"
+                                                                               Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                                                    <TextBlock Text="{x:Bind WeekDayString}" FontSize="11"
+                                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                               HorizontalAlignment="Center"/>
+                                                                </StackPanel>
+                                                            </Border>
+
+                                                            <!-- 右侧：提炼首句主题、元数据徽章与非重叠摘录 (防碰撞弹性排布) -->
+                                                            <StackPanel Grid.Column="2" Spacing="6" VerticalAlignment="Center">
+                                                                <Grid ColumnSpacing="12">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="*"/>
+                                                                        <ColumnDefinition Width="Auto"/>
+                                                                    </Grid.ColumnDefinitions>
+
+                                                                    <!-- 诗意首句或主题 -->
+                                                                    <TextBlock Grid.Column="0"
+                                                                               Text="{x:Bind Title}" FontWeight="SemiBold" FontSize="14"
+                                                                               TextTrimming="CharacterEllipsis" MaxLines="1"
+                                                                               Margin="0,0,8,0"
+                                                                               VerticalAlignment="Center"/>
+
+                                                                    <!-- 右侧字数与时间戳元数据胶囊 -->
+                                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                                        <Border Background="{ThemeResource AppBadgeBackgroundBrush}"
+                                                                                BorderBrush="{ThemeResource AppBadgeBorderBrush}"
+                                                                                BorderThickness="1" CornerRadius="4" Padding="7,2">
+                                                                            <TextBlock FontSize="11" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontWeight="SemiBold">
+                                                                                <Run Text="{x:Bind WordCount}"/>
+                                                                                <Run Text=" 字"/>
+                                                                            </TextBlock>
+                                                                        </Border>
+                                                                        <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                                                BorderThickness="1" CornerRadius="4" Padding="6,2">
+                                                                            <StackPanel Orientation="Horizontal" Spacing="3">
+                                                                                <FontIcon Glyph="&#xE823;" FontSize="10" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                                                                <TextBlock FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}">
+                                                                                    <Run Text="{x:Bind TimestampsCount}"/>
+                                                                                    <Run Text=" 条记录"/>
+                                                                                </TextBlock>
+                                                                            </StackPanel>
+                                                                        </Border>
+                                                                    </StackPanel>
+                                                                </Grid>
+
+                                                                <!-- 2行内容后续摘录 -->
+                                                                <TextBlock Text="{x:Bind Excerpt}" FontSize="12"
+                                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                           LineHeight="18"
+                                                                           Margin="0,0,6,0"
+                                                                           MaxLines="2" TextTrimming="CharacterEllipsis" TextWrapping="Wrap"
+                                                                           Visibility="{x:Bind local:DiaryListPage.GetExcerptVisibility(Excerpt)}"/>
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Border>
+
+                                                    <!-- 高亮状态指示层：当 IsHighlighted 为 true 时呈现氛围强调微透呼吸外框 -->
+                                                    <Border CornerRadius="8"
+                                                            Background="{ThemeResource AppBadgeBackgroundBrush}"
+                                                            BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"
+                                                            BorderThickness="1.5"
+                                                            IsHitTestVisible="False"
+                                                            Visibility="{x:Bind local:DiaryListPage.GetVisibility(IsHighlighted), Mode=OneWay}"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
+            </ScrollViewer>
+
+            <!-- 2. 左侧：单日只读日记阅读层级 (当处于单日只读阅读时呈现) -->
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="0,0,14,0"
+                          Visibility="{x:Bind local:DiaryListPage.GetVisibility(ViewModel.IsReadingDay), Mode=OneWay}">
+                <Grid HorizontalAlignment="Stretch">
+                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                            CornerRadius="8" Padding="28,24">
+                        <StackPanel Spacing="20">
+                            <!-- 顶部操作栏 (行 0 为完整日期标题，行 1 左侧为字数记录点，右侧依次为 [编辑] [删除日记] [返回列表]) -->
+                            <Grid RowSpacing="12">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- 行 0：日期大标题 -->
+                                <TextBlock Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+                                           Text="{x:Bind ViewModel.ReadingDateDisplay, Mode=OneWay}"
+                                           FontSize="22" FontWeight="Bold"
+                                           Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center"/>
+
+                                <!-- 行 1 左侧：元数据胶囊 (字数与记录点，清透高对比度无深色撞色) -->
+                                <StackPanel Grid.Row="1" Grid.Column="0"
+                                            Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Border Background="{ThemeResource AppBadgeBackgroundBrush}"
+                                            BorderBrush="{ThemeResource AppBadgeBorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="6" Padding="8,3">
+                                        <TextBlock Text="{x:Bind ViewModel.ReadingWordCount, Mode=OneWay}"
+                                                   FontSize="12" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontWeight="SemiBold"/>
+                                    </Border>
+                                    <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="6" Padding="8,3">
+                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                            <FontIcon Glyph="&#xE823;" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock Text="{x:Bind ViewModel.ReadingTimestampsCount, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock Text="条记录" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+
+                                <!-- 行 1 右侧：核心动作按钮组 [编辑] + [删除日记] + [← 返回列表] -->
+                                <StackPanel Grid.Row="1" Grid.Column="1"
+                                            Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Button Style="{ThemeResource AccentButtonStyle}" Padding="12,7" CornerRadius="6"
+                                            Click="ReadingEdit_Click">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <FontIcon Glyph="&#xE70F;" FontSize="12"/>
+                                            <TextBlock Text="编辑" FontSize="12" FontWeight="SemiBold"/>
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Button Background="#14E11D48"
+                                            BorderBrush="#50E11D48"
+                                            BorderThickness="1"
+                                            CornerRadius="6"
+                                            Padding="12,7"
+                                            Click="ReadingDelete_Click">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <FontIcon Glyph="&#xE74D;" FontSize="12" Foreground="#E11D48"/>
+                                            <TextBlock Text="删除日记" FontSize="12" FontWeight="SemiBold" Foreground="#E11D48"/>
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Button Style="{ThemeResource DefaultButtonStyle}" Padding="12,7" CornerRadius="6"
+                                            Command="{x:Bind ViewModel.CloseReadingDayCommand}">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <FontIcon Glyph="&#xE72B;" FontSize="12"/>
+                                            <TextBlock Text="返回列表" FontSize="12"/>
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+
+                            <MenuFlyoutSeparator Margin="0,-4,0,4"/>
+
+                            <!-- 正文阅读区域 (支持自由选词复制) -->
+                            <StackPanel Spacing="14">
+                                <TextBlock Text="{x:Bind ViewModel.ReadingDiaryTitle, Mode=OneWay}"
+                                           FontSize="18" FontWeight="SemiBold"
+                                           TextWrapping="Wrap"/>
+                                <TextBlock Text="{x:Bind ViewModel.ReadingDiaryContent, Mode=OneWay}"
+                                           FontSize="15" LineHeight="26"
+                                           TextWrapping="Wrap"
+                                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                           IsTextSelectionEnabled="True"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </ScrollViewer>
+
+            <!-- 3. 右侧：日历辅助观察面板 (内边距充足，避免标头与边缘拥挤) -->
+            <Border x:Name="AuxiliaryPanel" Grid.Column="1" VerticalAlignment="Top"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                    CornerRadius="10" Padding="16,14" Width="344">
+                <StackPanel Spacing="10">
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="2,0,0,2">
+                        <FontIcon Glyph="&#xE787;" FontSize="14" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                        <TextBlock Text="当月日历" FontSize="13" FontWeight="SemiBold"/>
+                    </StackPanel>
+
+                    <!-- 原生 CalendarView 辅助观察 -->
+                    <CalendarView x:Name="AuxiliaryCalendarView"
+                                  SelectionMode="Single"
+                                  HorizontalAlignment="Center"
+                                  CalendarViewDayItemChanging="AuxiliaryCalendarView_DayItemChanging"
+                                  SelectedDatesChanged="AuxiliaryCalendarView_SelectedDatesChanged"/>
+
+                    <!-- 选中日期状态提示卡片 -->
+                    <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                            CornerRadius="6" Padding="10,8">
+                        <StackPanel Spacing="4">
+                            <TextBlock x:Name="AuxDateStatusText" Text="点击日期查看日记" FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                            <Button x:Name="AuxWriteButton" Content="写日记" FontSize="11" Padding="8,4"
+                                    Style="{ThemeResource AccentButtonStyle}"
+                                    Visibility="Collapsed"
+                                    Click="AuxWriteButton_Click"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Page>

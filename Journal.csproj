@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>Journal</RootNamespace>
+    <AssemblyName>Jot</AssemblyName>
+    <Product>Jot</Product>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant())</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <WinUISDKReferences>false</WinUISDKReferences>
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <WindowsAppSDKSelfContained Condition="'$(WindowsAppSDKSelfContained)' == ''">false</WindowsAppSDKSelfContained>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>1.1.0</Version>
+    <ApplicationIcon>Assets\jot.ico</ApplicationIcon>
+    <SatelliteResourceLanguages>zh-CN;zh-Hans;en-US</SatelliteResourceLanguages>
+    <DefaultItemExcludes>$(DefaultItemExcludes);Release\**</DefaultItemExcludes>
+    <NoWarn>$(NoWarn);MVVMTK0045</NoWarn>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Manifest Include="$(ApplicationManifest)" />
+    <Content Include="Assets\jot.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\jot.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\Audio\**\*.wav">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools.WinApp" Version="0.6.1" />
+    <PackageReference Include="sqlite-net-pcl" Version="1.11.285" />
+    <PackageReference Include="SQLitePCLRaw.bundle_green" Version="2.1.11" />
+  </ItemGroup>
+
+  <Target Name="EnsureWinUIPriOnBuild" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).pri" DestinationFiles="$(TargetDir)resources.pri" Condition="Exists('$(TargetDir)$(AssemblyName).pri')" />
+  </Target>
+
+  <Target Name="CopyWinUIXamlAssetsOnPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_RootXbfFiles Include="$(TargetDir)*.xbf" />
+      <_ViewXbfFiles Include="$(TargetDir)Views\**\*.xbf" />
+      <_PriFiles Include="$(TargetDir)*.pri" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_RootXbfFiles)" DestinationFolder="$(PublishDir)" />
+    <Copy SourceFiles="@(_ViewXbfFiles)" DestinationFolder="$(PublishDir)Views\%(RecursiveDir)" />
+    <Copy SourceFiles="@(_PriFiles)" DestinationFolder="$(PublishDir)" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).pri" DestinationFiles="$(PublishDir)resources.pri" Condition="Exists('$(TargetDir)$(AssemblyName).pri')" />
+  </Target>
+</Project>
+
