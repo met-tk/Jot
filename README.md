@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="Assets/AppIcon_Rounded_1000.png" width="110" height="110" alt="Jot Logo" />
+  <img src="https://raw.githubusercontent.com/met-tk/Jot/main/Assets/jot.png" width="110" height="110" alt="Jot Logo" />
   <h1>Jot</h1>
   <p><strong>A simple and elegant journaling app · 纯粹、优雅的桌面沉浸式日记应用</strong></p>
   <p>
