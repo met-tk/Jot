@@ -93,8 +93,3 @@
 | `鼠标侧键 (前进 / 后退)` | 跨视图层级返回或历史页面前进/后退 |
 
 ---
-
-## 👤 制作人与反馈 (Author & Feedback)
-
-- **AI-Driven by Taketo** · [前往 Bilibili 找我玩](https://space.bilibili.com/24340298)
-- **问题反馈与联系**：[yunotaketo@gmail.com](mailto:yunotaketo@gmail.com)
