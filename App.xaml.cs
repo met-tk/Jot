@@ -54,12 +54,14 @@ namespace Journal
             var settings = AppSettingsService.Instance.CurrentSettings;
             SoundEffectService.Instance.SetEnabled(settings.IsSoundEnabled);
             SoundEffectService.Instance.SetTheme(settings.SoundTheme);
+            SoundEffectService.Instance.SetSaveTheme(settings.SaveSoundTheme);
             SoundEffectService.Instance.SetVolume(settings.SoundVolume);
 
             AppSettingsService.Instance.SettingsChanged += (s, cfg) =>
             {
                 SoundEffectService.Instance.SetEnabled(cfg.IsSoundEnabled);
                 SoundEffectService.Instance.SetTheme(cfg.SoundTheme);
+                SoundEffectService.Instance.SetSaveTheme(cfg.SaveSoundTheme);
                 SoundEffectService.Instance.SetVolume(cfg.SoundVolume);
             };
 

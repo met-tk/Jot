@@ -30,8 +30,10 @@ namespace Journal.Views
         private bool _isUpdatingEditorFromModel = false;
         private bool _isUpdatingModelFromEditor = false;
         private bool _isPerformingUndoRedo = false;
-        private int _lastTextLength = 0;
         private bool _isComposing = false;
+        private bool _wasComposingAtKeyDownStart = false;
+        private long _lastKeyDownSoundTicks = 0;
+        private long _lastCompositionSoundTicks = 0;
 
         // 受控分段撤回/反撤回栈（防止穿透初始加载基线清空全文，并支持 Ctrl+Shift+Z 反撤回）
         private const int MaxUndoSteps = 200;
@@ -72,10 +74,11 @@ namespace Journal.Views
             ContentEditorBox.LostFocus += (s, e) =>
             {
                 _isComposing = false;
+                _wasComposingAtKeyDownStart = false;
                 _canCoalesceCurrentBurst = false;
             };
 
-            // 挂载 IME 中文拼音输入法组合事件，确保中文字词上屏 100% 播放物理击键音并按词组建立独立撤回步
+            // 挂载 IME 中文拼音输入法组合事件，按词组建立独立撤回步，并在非键盘选词（如鼠标点击候选词）时补发击键音
             ContentEditorBox.TextCompositionStarted += (s, e) =>
             {
                 _isComposing = true;
@@ -83,11 +86,18 @@ namespace Journal.Views
             ContentEditorBox.TextCompositionEnded += (s, e) =>
             {
                 _isComposing = false;
+                _wasComposingAtKeyDownStart = false;
                 string cleanText = GetCleanEditorText();
-                _lastTextLength = cleanText.Length;
                 RecordUserEditForUndo(cleanText, forceNewStep: true);
-                PlayPlatenRecoil(isEnter: false);
-                SoundEffectService.Instance.PlayKeyClick(false);
+
+                long now = DateTime.UtcNow.Ticks;
+                if (now - _lastKeyDownSoundTicks > 800_000)
+                {
+                    _lastCompositionSoundTicks = now;
+                    PlayPlatenRecoil(isEnter: false);
+                    SoundEffectService.Instance.PlayKeyClick(false);
+                }
+
                 SyncViewModelContent(cleanText);
             };
 
@@ -315,6 +325,8 @@ namespace Journal.Views
 
         private void OnPagePreviewKeyDown(object sender, KeyRoutedEventArgs e)
         {
+            _wasComposingAtKeyDownStart = _isComposing;
+
             bool isCtrl = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)
                            & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
             bool isShift = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift)
@@ -348,11 +360,9 @@ namespace Journal.Views
                 }
                 else if (e.Key == VirtualKey.S && !isShift)
                 {
-                    // Ctrl + S: 手动保存日记
+                    // Ctrl + S: 手动保存日记并播放保存反馈音效
                     e.Handled = true;
-                    string liveText = GetCleanEditorText();
-                    SyncViewModelContent(liveText);
-                    _ = ViewModel.SaveCurrentAsync();
+                    TriggerManualSave();
                     return;
                 }
                 else if (e.Key == VirtualKey.T && !isShift)
@@ -370,34 +380,59 @@ namespace Journal.Views
         private void OnEditorKeyDown(object sender, KeyRoutedEventArgs e)
         {
             var key = e.Key;
+            bool wasComposing = _wasComposingAtKeyDownStart || _isComposing;
+            _wasComposingAtKeyDownStart = false;
 
-            // 1. 回车换行专属音效与字纸深回弹
-            if (key == VirtualKey.Enter)
-            {
-                PlayPlatenRecoil(isEnter: true);
-                SoundEffectService.Instance.PlayEnterKey();
-                return;
-            }
-
-            // 2. 过滤 Ctrl 组合命令快捷键 (如 Ctrl+S, Ctrl+T, Ctrl+C, Ctrl+Z 等)
+            // 1. 过滤 Ctrl / Alt 组合命令快捷键 (如 Ctrl+S, Ctrl+T, Ctrl+C, Ctrl+Z, Alt+Tab 等)
             bool isCtrl = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)
                            & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
-            if (isCtrl)
+            bool isAlt = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Menu)
+                          & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
+            if (isCtrl || isAlt)
             {
                 return;
             }
 
-            // 3. 过滤独立功能与修饰键 (Shift, Alt, CapsLock, Win, 方向键等)
-            if (key is VirtualKey.Shift or VirtualKey.Control or VirtualKey.Menu or VirtualKey.CapitalLock
-                or VirtualKey.LeftWindows or VirtualKey.RightWindows or VirtualKey.Escape
+            // 2. 过滤独立功能、导航与修饰键 (Shift, Alt, CapsLock, Win, 方向键, F1~F12 等)
+            if (key is VirtualKey.Shift or VirtualKey.LeftShift or VirtualKey.RightShift
+                or VirtualKey.Control or VirtualKey.LeftControl or VirtualKey.RightControl
+                or VirtualKey.Menu or VirtualKey.LeftMenu or VirtualKey.RightMenu
+                or VirtualKey.CapitalLock or VirtualKey.NumberKeyLock or VirtualKey.Scroll
+                or VirtualKey.LeftWindows or VirtualKey.RightWindows or VirtualKey.Application
+                or VirtualKey.Escape or VirtualKey.Pause or VirtualKey.Snapshot or VirtualKey.Insert
                 or VirtualKey.Left or VirtualKey.Right or VirtualKey.Up or VirtualKey.Down
-                or VirtualKey.PageUp or VirtualKey.PageDown or VirtualKey.Home or VirtualKey.End)
+                or VirtualKey.PageUp or VirtualKey.PageDown or VirtualKey.Home or VirtualKey.End
+                or (>= VirtualKey.F1 and <= VirtualKey.F12))
             {
+                return;
+            }
+
+            long now = DateTime.UtcNow.Ticks;
+            if (now - _lastCompositionSoundTicks < 500_000)
+            {
+                return;
+            }
+
+            // 3. 回车换行专属音效与字纸深回弹（若处于 IME 拼音组合态按回车直接上屏英文，则按常规上屏键发声）
+            if (key == VirtualKey.Enter)
+            {
+                _lastKeyDownSoundTicks = now;
+                if (wasComposing)
+                {
+                    PlayPlatenRecoil(isEnter: false);
+                    SoundEffectService.Instance.PlayKeyClick(false);
+                }
+                else
+                {
+                    PlayPlatenRecoil(isEnter: true);
+                    SoundEffectService.Instance.PlayEnterKey();
+                }
                 return;
             }
 
             // 4. 有效击键（含常规字母数字、标点符号、空格退格以及 IME 中文拼音 VirtualKey.ProcessKey = 229）
-            bool isSpecial = (key is VirtualKey.Space or VirtualKey.Back or VirtualKey.Delete);
+            _lastKeyDownSoundTicks = now;
+            bool isSpecial = (key is VirtualKey.Space or VirtualKey.Back or VirtualKey.Delete or VirtualKey.Tab);
             PlayPlatenRecoil(isEnter: false);
             SoundEffectService.Instance.PlayKeyClick(isSpecial);
         }
@@ -432,29 +467,10 @@ namespace Journal.Views
         {
             if (_isUpdatingEditorFromModel || _isPerformingUndoRedo || ViewModel.IsLoading)
             {
-                string initTxt = GetCleanEditorText();
-                _lastTextLength = initTxt.Length;
                 return;
             }
 
             string cleanText = GetCleanEditorText();
-
-            int currentLength = cleanText.Length;
-            // 当非 IME 组合中产生字符净增量时（如快捷粘贴、特定非标准键盘字符输入），补充触发音效
-            if (!_isComposing && currentLength > _lastTextLength && !_isUpdatingEditorFromModel)
-            {
-                if (cleanText.Length > 0 && (cleanText[^1] == '\r' || cleanText[^1] == '\n'))
-                {
-                    PlayPlatenRecoil(isEnter: true);
-                    SoundEffectService.Instance.PlayEnterKey();
-                }
-                else
-                {
-                    PlayPlatenRecoil(isEnter: false);
-                    SoundEffectService.Instance.PlayKeyClick(false);
-                }
-            }
-            _lastTextLength = currentLength;
 
             if (!_isComposing)
             {
@@ -620,7 +636,6 @@ namespace Journal.Views
                 ContentEditorBox.Document.UndoLimit = 100;
 
                 _currentConfirmedSnapshot = new EditorHistorySnapshot(actualText, start, end - start);
-                _lastTextLength = actualText.Length;
 
                 SyncViewModelContent(actualText);
                 ContentEditorBox.Focus(FocusState.Programmatic);
@@ -635,6 +650,7 @@ namespace Journal.Views
         {
             _isUpdatingEditorFromModel = true;
             _isComposing = false;
+            _wasComposingAtKeyDownStart = false;
             try
             {
                 string safeContent = content ?? string.Empty;
@@ -645,7 +661,6 @@ namespace Journal.Views
                 ContentEditorBox.Document.UndoLimit = 100;
 
                 string actualText = GetCleanEditorText();
-                _lastTextLength = actualText.Length;
                 ResetUndoHistory(actualText);
             }
             finally
@@ -675,12 +690,23 @@ namespace Journal.Views
             ViewModel.InsertTimestamp();
         }
 
+        private void TriggerManualSave()
+        {
+            string liveText = GetCleanEditorText();
+            SyncViewModelContent(liveText);
+            SoundEffectService.Instance.PlaySaveSound();
+            _ = ViewModel.SaveCurrentAsync();
+        }
+
+        private void ManualSaveButton_Click(object sender, RoutedEventArgs e)
+        {
+            TriggerManualSave();
+        }
+
         private void SaveAccelerator_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
         {
             args.Handled = true;
-            string liveText = GetCleanEditorText();
-            SyncViewModelContent(liveText);
-            _ = ViewModel.SaveCurrentAsync();
+            TriggerManualSave();
         }
     }
 }

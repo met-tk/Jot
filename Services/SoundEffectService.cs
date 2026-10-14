@@ -169,6 +169,7 @@ namespace Journal.Services
 
         public bool IsEnabled { get; private set; } = true;
         public string CurrentTheme { get; private set; } = "Typewriter";
+        public string CurrentSaveTheme { get; private set; } = "TypewriterBell";
         public double Volume { get; private set; } = 0.8;
 
         private readonly Dictionary<string, byte[]> _rawAudioTemplates = new();
@@ -176,8 +177,16 @@ namespace Journal.Services
         private readonly Random _random = new();
         private readonly object _lock = new();
         private long _lastPlayTicks = 0;
+        private long _lastEnterPlayTicks = 0;
+        private long _lastSavePlayTicks = 0;
 
-        // 二级回车长铃句柄与安全生命周期跟踪池
+        // Fisher-Yates 防连续重复洗牌袋（Shuffle Bag）状态
+        private readonly List<int> _clickShuffleBag = new(PcmAudioSynthesizer.ClickVariantCount);
+        private readonly List<int> _specialShuffleBag = new(PcmAudioSynthesizer.SpecialVariantCount);
+        private int _lastClickIndex = -1;
+        private int _lastSpecialIndex = -1;
+
+        // 二级回车与保存长铃句柄及安全生命周期跟踪池
         private IntPtr _hWaveOut = IntPtr.Zero;
         private bool _isBellWaveOutActive = false;
         private readonly List<WaveOutBufferContext> _activeBellBuffers = new();
@@ -186,6 +195,7 @@ namespace Journal.Services
         public SoundEffectService()
         {
             LoadThemeTemplates(CurrentTheme);
+            LoadSaveTemplate(CurrentSaveTheme);
             RefreshScaledCache();
             InitWaveOutSecondaryTrack();
         }
@@ -216,7 +226,55 @@ namespace Journal.Services
         }
 
         /// <summary>
-        /// 极速播放按键敲击音效（单次耗时约 3.5 微秒，零线程切换开销）
+        /// 从指定洗牌袋中抽取下一个不与上一次重复的变体索引（线程安全调用需在 _lock 内）
+        /// </summary>
+        private int NextNonRepeatingIndexLocked(List<int> bag, ref int lastIndex, int count)
+        {
+            if (count <= 1) return 0;
+
+            if (bag.Count == 0)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    bag.Add(i);
+                }
+
+                // Fisher-Yates 随机洗牌
+                for (int i = count - 1; i > 0; i--)
+                {
+                    int j = _random.Next(0, i + 1);
+                    (bag[i], bag[j]) = (bag[j], bag[i]);
+                }
+
+                // 跨袋边界去重：若新洗牌袋即将弹出的首个元素与上一轮末尾相同，则与袋内前段元素交换
+                if (bag[^1] == lastIndex)
+                {
+                    int swapIdx = _random.Next(0, count - 1);
+                    (bag[^1], bag[swapIdx]) = (bag[swapIdx], bag[^1]);
+                }
+            }
+
+            int next = bag[^1];
+            bag.RemoveAt(bag.Count - 1);
+            lastIndex = next;
+            return next;
+        }
+
+        /// <summary>
+        /// 供内部与自动化测试调用的防重复变体抽取器
+        /// </summary>
+        public int NextClickVariantIndex(bool isSpecialKey = false)
+        {
+            lock (_lock)
+            {
+                return isSpecialKey
+                    ? NextNonRepeatingIndexLocked(_specialShuffleBag, ref _lastSpecialIndex, PcmAudioSynthesizer.SpecialVariantCount)
+                    : NextNonRepeatingIndexLocked(_clickShuffleBag, ref _lastClickIndex, PcmAudioSynthesizer.ClickVariantCount);
+            }
+        }
+
+        /// <summary>
+        /// 极速播放按键敲击音效（单次耗时约 3.5 微秒，零线程切换开销，支持 10 变体防连续重复随机洗牌）
         /// </summary>
         public void PlayKeyClick(bool isSpecialKey = false)
         {
@@ -227,14 +285,28 @@ namespace Journal.Services
             if (now - _lastPlayTicks < 200_000) return;
             _lastPlayTicks = now;
 
-            string key = isSpecialKey ? "special" : $"click_{_random.Next(0, 3)}";
             byte[]? pcmBytes;
             lock (_lock)
             {
-                _scaledAudioCache.TryGetValue(key, out pcmBytes);
+                string key;
+                if (isSpecialKey)
+                {
+                    int sIdx = NextNonRepeatingIndexLocked(_specialShuffleBag, ref _lastSpecialIndex, PcmAudioSynthesizer.SpecialVariantCount);
+                    key = sIdx == 0 ? "special" : $"special_{sIdx}";
+                }
+                else
+                {
+                    int cIdx = NextNonRepeatingIndexLocked(_clickShuffleBag, ref _lastClickIndex, PcmAudioSynthesizer.ClickVariantCount);
+                    key = $"click_{cIdx}";
+                }
+
+                if (!_scaledAudioCache.TryGetValue(key, out pcmBytes))
+                {
+                    _scaledAudioCache.TryGetValue(isSpecialKey ? "special" : "click_0", out pcmBytes);
+                }
             }
 
-            if (pcmBytes != null)
+            if (pcmBytes != null && pcmBytes.Length > 44)
             {
                 PlaySound(pcmBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
             }
@@ -263,22 +335,62 @@ namespace Journal.Services
         {
             if (!IsEnabled || Volume <= 0.001) return;
 
+            // 35ms 回车防重入节流保护，并同步更新常规击键时间戳防止同一击键瞬态双轨齐鸣
+            long now = DateTime.UtcNow.Ticks;
+            if (now - _lastEnterPlayTicks < 350_000) return;
+            _lastEnterPlayTicks = now;
+            _lastPlayTicks = now;
+
             byte[]? enterBytes;
             lock (_lock)
             {
                 _scaledAudioCache.TryGetValue("enter", out enterBytes);
             }
 
-            if (enterBytes == null) return;
+            if (enterBytes == null || enterBytes.Length <= 44) return;
+            PlayOnSecondaryWaveOutTrack(enterBytes, cleanupDelayMs: 650);
+        }
 
+        /// <summary>
+        /// 播放手动保存专属提示音效（Ctrl+S 或点击保存按钮时触发）
+        /// </summary>
+        public void PlaySaveSound()
+        {
+            if (!IsEnabled || Volume <= 0.001) return;
+            if (string.IsNullOrWhiteSpace(CurrentSaveTheme) ||
+                string.Equals(CurrentSaveTheme, "None", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            // 80ms 手动保存防连击节流
+            long now = DateTime.UtcNow.Ticks;
+            if (now - _lastSavePlayTicks < 800_000) return;
+            _lastSavePlayTicks = now;
+
+            byte[]? saveBytes;
+            lock (_lock)
+            {
+                _scaledAudioCache.TryGetValue("save", out saveBytes);
+            }
+
+            if (saveBytes == null || saveBytes.Length <= 44) return;
+            PlayOnSecondaryWaveOutTrack(saveBytes, cleanupDelayMs: 5200);
+        }
+
+        private void PlayOnSecondaryWaveOutTrack(byte[] wavBytes, int cleanupDelayMs)
+        {
             // 若支持 WaveOut 二级独立轨道，则向 WaveOut 投递，实现真正的多音混音；否则回退为 PlaySound
-            if (_isBellWaveOutActive && _hWaveOut != IntPtr.Zero && enterBytes.Length > 44)
+            if (_isBellWaveOutActive && _hWaveOut != IntPtr.Zero && wavBytes.Length > 44)
             {
                 try
                 {
                     // 仅提取 44 字节 WAV 头部之后的 PCM 裸数据
-                    byte[] pcmPayload = new byte[enterBytes.Length - 44];
-                    Buffer.BlockCopy(enterBytes, 44, pcmPayload, 0, pcmPayload.Length);
+                    byte[] pcmPayload = new byte[wavBytes.Length - 44];
+                    Buffer.BlockCopy(wavBytes, 44, pcmPayload, 0, pcmPayload.Length);
+
+                    // 根据实际 44.1kHz 16-bit 单声道 PCM 字节长度（88.2 bytes/ms）动态计算完整播放时长，防止长延音被提前回收
+                    int dynamicDelayMs = Math.Max(cleanupDelayMs, (int)Math.Ceiling(pcmPayload.Length / 88.2) + 350);
 
                     // 异步在线程池中处理缓冲区固定与排队，避免阻塞当前主调用
                     ThreadPool.QueueUserWorkItem(_ =>
@@ -289,15 +401,15 @@ namespace Journal.Services
                             {
                                 if (!_isBellWaveOutActive || _hWaveOut == IntPtr.Zero)
                                 {
-                                    PlaySound(enterBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+                                    PlaySound(wavBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
                                     return;
                                 }
 
                                 // 1. 回收所有已经播放完成的旧缓冲区（100% 释放 GCHandle、WAVEHDR 及非托管句柄）
                                 CleanupCompletedBellBuffersLocked();
 
-                                // 2. 连续快速敲击防爆破保护：并发未完成缓冲区达到 3 个时，重置设备并强制清空全部旧缓冲区
-                                if (_activeBellBuffers.Count >= 3)
+                                // 2. 若仍有未播放完的前序余音，立即重置二级轨道并清空旧缓冲区，避免单句柄 FIFO 串行排队导致延迟响两次
+                                if (_activeBellBuffers.Count > 0)
                                 {
                                     waveOutReset(_hWaveOut);
                                     CleanupCompletedBellBuffersLocked(forceAll: true);
@@ -311,12 +423,12 @@ namespace Journal.Services
                                 else
                                 {
                                     ctx.Dispose();
-                                    PlaySound(enterBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+                                    PlaySound(wavBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
                                     return;
                                 }
                             }
 
-                            // 3. 计划在音频播放完毕后 (~650ms) 触发延迟回收
+                            // 3. 计划在音频完整播放完毕后触发延迟回收
                             Timer? cleanupTimer = null;
                             cleanupTimer = new Timer(_ =>
                             {
@@ -331,11 +443,11 @@ namespace Journal.Services
                                 {
                                     cleanupTimer?.Dispose();
                                 }
-                            }, null, 650, Timeout.Infinite);
+                            }, null, dynamicDelayMs, Timeout.Infinite);
                         }
                         catch
                         {
-                            PlaySound(enterBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+                            PlaySound(wavBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
                         }
                     });
                     return;
@@ -347,16 +459,27 @@ namespace Journal.Services
             }
 
             // 基础单轨降级
-            PlaySound(enterBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+            PlaySound(wavBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
         }
 
         public void SetTheme(string theme)
         {
             if (string.IsNullOrWhiteSpace(theme)) theme = "Typewriter";
-            if (CurrentTheme == theme && _rawAudioTemplates.Count > 0) return;
+            if (CurrentTheme == theme && _rawAudioTemplates.ContainsKey("click_0")) return;
 
             CurrentTheme = theme;
             LoadThemeTemplates(theme);
+            RefreshScaledCache();
+        }
+
+        public void SetSaveTheme(string saveTheme)
+        {
+            if (string.IsNullOrWhiteSpace(saveTheme)) saveTheme = "TypewriterBell";
+            if (CurrentSaveTheme == saveTheme && (_rawAudioTemplates.ContainsKey("save") || string.Equals(saveTheme, "None", StringComparison.OrdinalIgnoreCase)))
+                return;
+
+            CurrentSaveTheme = saveTheme;
+            LoadSaveTemplate(saveTheme);
             RefreshScaledCache();
         }
 
@@ -373,19 +496,86 @@ namespace Journal.Services
             IsEnabled = enabled;
         }
 
+        private static string ResolveAudioDirectory(params string[] subPaths)
+        {
+            string baseDir = Path.Combine(AppContext.BaseDirectory, "Assets", "Audio");
+            string candidate = Path.Combine(baseDir, Path.Combine(subPaths));
+            if (Directory.Exists(candidate)) return candidate;
+
+            try
+            {
+                string devCandidate = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Assets", "Audio", Path.Combine(subPaths)));
+                if (Directory.Exists(devCandidate)) return devCandidate;
+            }
+            catch { }
+
+            return candidate;
+        }
+
         private void LoadThemeTemplates(string theme)
         {
             lock (_lock)
             {
-                _rawAudioTemplates.Clear();
-                string themeDir = Path.Combine(AppContext.BaseDirectory, "Assets", "Audio", theme);
+                _clickShuffleBag.Clear();
+                _specialShuffleBag.Clear();
+                _lastClickIndex = -1;
+                _lastSpecialIndex = -1;
 
-                // 外部实录 WAV 文件存在优先读取；缺失时通过内置物理建模算法毫秒级实时生成
-                _rawAudioTemplates["click_0"] = LoadOrSynthesize(themeDir, "click1.wav", theme, 0);
-                _rawAudioTemplates["click_1"] = LoadOrSynthesize(themeDir, "click2.wav", theme, 1);
-                _rawAudioTemplates["click_2"] = LoadOrSynthesize(themeDir, "click3.wav", theme, 2);
-                _rawAudioTemplates["special"] = LoadOrSynthesize(themeDir, "special.wav", theme, 3);
-                _rawAudioTemplates["enter"]   = LoadOrSynthesize(themeDir, "enter.wav",   theme, 4);
+                string themeDir = ResolveAudioDirectory(theme);
+
+                // 加载 10 个普通击键变体 (click1.wav ~ click10.wav)
+                int[] clickVariantCodes = { 0, 1, 2, 5, 6, 7, 8, 9, 10, 11 };
+                for (int i = 0; i < PcmAudioSynthesizer.ClickVariantCount; i++)
+                {
+                    string fileName = $"click{i + 1}.wav";
+                    _rawAudioTemplates[$"click_{i}"] = LoadOrSynthesize(themeDir, fileName, theme, clickVariantCodes[i]);
+                }
+
+                // 加载 3 个特殊大键变体 (special.wav, special2.wav, special3.wav)
+                _rawAudioTemplates["special"]   = LoadOrSynthesize(themeDir, "special.wav",  theme, 3);
+                _rawAudioTemplates["special_1"] = LoadOrSynthesize(themeDir, "special2.wav", theme, 12);
+                _rawAudioTemplates["special_2"] = LoadOrSynthesize(themeDir, "special3.wav", theme, 13);
+
+                // 加载回车键音效
+                _rawAudioTemplates["enter"] = LoadOrSynthesize(themeDir, "enter.wav", theme, 4);
+            }
+        }
+
+        private void LoadSaveTemplate(string saveTheme)
+        {
+            lock (_lock)
+            {
+                if (string.IsNullOrWhiteSpace(saveTheme) || string.Equals(saveTheme, "None", StringComparison.OrdinalIgnoreCase))
+                {
+                    _rawAudioTemplates.Remove("save");
+                    return;
+                }
+
+                string saveDir = ResolveAudioDirectory("Save");
+                string fullPath = Path.Combine(saveDir, $"{saveTheme}.wav");
+                if (File.Exists(fullPath))
+                {
+                    try
+                    {
+                        byte[] data = File.ReadAllBytes(fullPath);
+                        if (data.Length > 44)
+                        {
+                            _rawAudioTemplates["save"] = data;
+                            return;
+                        }
+                    }
+                    catch { }
+                }
+
+                byte[] fallback = PcmAudioSynthesizer.GenerateSaveSound(saveTheme);
+                if (fallback.Length > 44)
+                {
+                    _rawAudioTemplates["save"] = fallback;
+                }
+                else
+                {
+                    _rawAudioTemplates.Remove("save");
+                }
             }
         }
 

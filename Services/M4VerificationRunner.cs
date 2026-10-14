@@ -264,6 +264,20 @@ namespace Journal.Services
                     // Test commands do not throw
                     vm.PreviewKeySoundCommand.Execute(null);
                     vm.PreviewEnterSoundCommand.Execute(null);
+                    vm.PreviewSaveSoundCommand.Execute(null);
+
+                    // 验证新增 4 款实录音效主题与手动保存音效预设选项
+                    AssertTrue(vm.AvailableSoundThemeOptions.Any(o => o.Id == "VintageTypewriterPro"), "Must contain VintageTypewriterPro");
+                    AssertTrue(vm.AvailableSoundThemeOptions.Any(o => o.Id == "ClassicTypewriterReal"), "Must contain ClassicTypewriterReal");
+                    AssertTrue(vm.AvailableSoundThemeOptions.Any(o => o.Id == "IPhoneKeyboard"), "Must contain IPhoneKeyboard");
+                    AssertTrue(vm.AvailableSoundThemeOptions.Any(o => o.Id == "DataMatrixSfx"), "Must contain DataMatrixSfx");
+                    AssertTrue(vm.AvailableSaveSoundThemeOptions.Any(o => o.Id == "TypewriterBell"), "Must contain TypewriterBell save preset");
+                    AssertTrue(vm.AvailableSaveSoundThemeOptions.Any(o => o.Id == "None"), "Must contain None save preset");
+
+                    vm.SelectedSaveTheme = "None";
+                    AssertEqual("None", service.CurrentSettings.SaveSoundTheme, "SaveSoundTheme must propagate to settings");
+                    vm.SelectedSaveTheme = "TypewriterBell";
+                    AssertEqual("TypewriterBell", service.CurrentSettings.SaveSoundTheme, "SaveSoundTheme must propagate back to TypewriterBell");
                 }
                 finally
                 {
@@ -271,7 +285,7 @@ namespace Journal.Services
                 }
             });
 
-            // Test 9: SoundEffectService 内存缩放缓存与主题热切
+            // Test 9: SoundEffectService 内存缩放缓存、防连续重复多变体洗牌与主题热切
             RunTest("SoundEffectService_ThemeAndVolumeControl_OperatesWithoutExceptions", () =>
             {
                 var soundService = SoundEffectService.Instance;
@@ -279,18 +293,55 @@ namespace Journal.Services
                 soundService.SetTheme("CherryBlue");
                 AssertEqual("CherryBlue", soundService.CurrentTheme, "Theme should be CherryBlue");
 
+                soundService.SetSaveTheme("TypewriterBell");
+                AssertEqual("TypewriterBell", soundService.CurrentSaveTheme, "Save theme should be TypewriterBell");
+
                 soundService.SetVolume(0.5);
                 AssertEqual(0.5, soundService.Volume, "Volume should be 0.5");
 
-                // Execute key click & enter key playback without throwing
+                // 验证 Fisher-Yates 防连续重复洗牌算法：连续抽取 100 次普通键变体与 30 次大键变体绝不出现相邻重复，且覆盖全部变体
+                var seenClicks = new HashSet<int>();
+                int prevClick = -1;
+                for (int i = 0; i < 100; i++)
+                {
+                    int curr = soundService.NextClickVariantIndex(isSpecialKey: false);
+                    AssertTrue(curr >= 0 && curr < PcmAudioSynthesizer.ClickVariantCount, "Click variant index must be in range");
+                    AssertTrue(curr != prevClick, $"Consecutive click variants must never repeat (step {i}: {curr})");
+                    seenClicks.Add(curr);
+                    prevClick = curr;
+                }
+                AssertEqual(PcmAudioSynthesizer.ClickVariantCount, seenClicks.Count, "All 10 click variants must be covered");
+
+                var seenSpecials = new HashSet<int>();
+                int prevSpecial = -1;
+                for (int i = 0; i < 30; i++)
+                {
+                    int curr = soundService.NextClickVariantIndex(isSpecialKey: true);
+                    AssertTrue(curr >= 0 && curr < PcmAudioSynthesizer.SpecialVariantCount, "Special variant index must be in range");
+                    AssertTrue(curr != prevSpecial, $"Consecutive special variants must never repeat (step {i}: {curr})");
+                    seenSpecials.Add(curr);
+                    prevSpecial = curr;
+                }
+                AssertEqual(PcmAudioSynthesizer.SpecialVariantCount, seenSpecials.Count, "All 3 special variants must be covered");
+
+                // Execute key click, enter key & save sound playback without throwing
                 soundService.PlayKeyClick(isSpecialKey: false);
                 soundService.PlayKeyClick(isSpecialKey: true);
                 soundService.PlayEnterKey();
+                soundService.PlaySaveSound();
 
                 // Rapid enter key presses stress test (verify 100% leak-free unmanaged memory & GCHandle lifecycle)
                 for (int i = 0; i < 10; i++)
                 {
                     soundService.PlayEnterKey();
+                }
+
+                // Test real-recorded themes loading & playback
+                foreach (var realTheme in new[] { "VintageTypewriterPro", "ClassicTypewriterReal", "IPhoneKeyboard", "DataMatrixSfx" })
+                {
+                    soundService.SetTheme(realTheme);
+                    AssertEqual(realTheme, soundService.CurrentTheme, $"Theme should switch to {realTheme}");
+                    soundService.PlayKeyClick(false);
                 }
 
                 // Test mute mode
@@ -301,6 +352,7 @@ namespace Journal.Services
                 // Restore
                 soundService.SetEnabled(true);
                 soundService.SetTheme("Typewriter");
+                soundService.SetSaveTheme("TypewriterBell");
                 soundService.SetVolume(0.8);
             });
 

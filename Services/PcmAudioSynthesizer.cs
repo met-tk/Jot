@@ -15,27 +15,100 @@ namespace Journal.Services
         public const short BitsPerSample = 16;
 
         /// <summary>
+        /// 普通击键变体总数（click1.wav ~ click10.wav）
+        /// </summary>
+        public const int ClickVariantCount = 10;
+
+        /// <summary>
+        /// 特殊大键（空格/退格）变体总数（special.wav, special2.wav, special3.wav）
+        /// </summary>
+        public const int SpecialVariantCount = 3;
+
+        // 变体编号映射表：保持 0~2 为 click1~3, 3 为 special1, 4 为 enter 以 100% 兼容既有测试；5~11 为 click4~10，12~13 为 special2~3
+        private static readonly (string FileName, int VariantCode)[] ThemeAssetEntries =
+        {
+            ("click1.wav", 0),
+            ("click2.wav", 1),
+            ("click3.wav", 2),
+            ("click4.wav", 5),
+            ("click5.wav", 6),
+            ("click6.wav", 7),
+            ("click7.wav", 8),
+            ("click8.wav", 9),
+            ("click9.wav", 10),
+            ("click10.wav", 11),
+            ("special.wav", 3),
+            ("special2.wav", 12),
+            ("special3.wav", 13),
+            ("enter.wav", 4)
+        };
+
+        // 模拟真实键盘不同行位（R1~R4）腔体共鸣、手指敲击力度与轴心阻尼微散度表（index 0 保持 1.0 精确基线，散度温和均匀）
+        private static readonly double[] ClickPitchFactors = { 1.000, 0.972, 1.024, 0.955, 1.035, 0.984, 1.015, 0.964, 1.028, 0.990 };
+        private static readonly double[] ClickDecayFactors = { 1.000, 0.960, 1.040, 0.945, 1.055, 0.975, 1.025, 0.965, 1.035, 0.985 };
+        private static readonly double[] ClickGainFactors  = { 1.000, 0.985, 0.990, 0.975, 0.980, 0.995, 0.990, 0.980, 0.985, 0.995 };
+
+        private static readonly double[] SpecialPitchFactors = { 1.000, 0.965, 1.032 };
+        private static readonly double[] SpecialDecayFactors = { 1.000, 0.955, 1.045 };
+        private static readonly double[] SpecialGainFactors  = { 1.000, 0.985, 0.990 };
+
+        private static bool IsSpecialVariant(int variant) => variant is 3 or 12 or 13;
+
+        private static (double Pitch, double Decay, double Gain) GetMicroVariation(int variant)
+        {
+            if (variant == 4) return (1.0, 1.0, 1.0);
+            if (IsSpecialVariant(variant))
+            {
+                int sIdx = variant switch { 12 => 1, 13 => 2, _ => 0 };
+                return (SpecialPitchFactors[sIdx], SpecialDecayFactors[sIdx], SpecialGainFactors[sIdx]);
+            }
+            int cIdx = variant switch
+            {
+                0 => 0,
+                1 => 1,
+                2 => 2,
+                >= 5 and <= 11 => variant - 2,
+                _ => Math.Abs(variant) % ClickPitchFactors.Length
+            };
+            return (ClickPitchFactors[cIdx], ClickDecayFactors[cIdx], ClickGainFactors[cIdx]);
+        }
+
+        /// <summary>
         /// 根据主题与变体编号生成未压缩 16-bit PCM WAV 字节数组
         /// </summary>
-        /// <param name="theme">"Typewriter", "CherryBlue", "CherryBrown", "CherryRed", "MahjongThock", "RaindropSlate", "OldMembrane", "WoodBlock"</param>
-        /// <param name="variant">0~2: click变体, 3: 空格/退格等特殊键, 4: 回车键</param>
+        /// <param name="theme">主题标识</param>
+        /// <param name="variant">0~2, 5~11: click变体(10种); 3, 12~13: 空格/退格等特殊键(3种); 4: 回车键</param>
         public static byte[] Generate(string theme, int variant)
         {
             return (theme ?? string.Empty).Trim().ToLowerInvariant() switch
             {
                 "cherryblue" => GenerateCherryBlue(variant),
                 "cherrybrown" => GenerateCherryBrown(variant),
-                "cherryred" => GenerateCherryRed(variant),
+                "cherryred" or "iphonekeyboard" => GenerateCherryRed(variant),
                 "mahjongthock" or "hifimahjong" or "mahjong" => GenerateMahjongThock(variant),
                 "raindropslate" or "raindrop" => GenerateRaindropSlate(variant),
                 "oldmembrane" or "membrane" or "vintagemembrane" => GenerateOldMembrane(variant),
-                "woodblock" or "woodenfish" => GenerateWoodBlock(variant),
+                "woodblock" or "woodenfish" or "datamatrixsfx" => GenerateWoodBlock(variant),
+                "vintagetypewriterpro" or "classictypewriterreal" => GenerateTypewriter(variant),
                 _ => GenerateTypewriter(variant)
             };
         }
 
         /// <summary>
-        /// 生成独立的黄铜回车长铃音效（C7 2093Hz + 谐波指数衰减，约 520ms）
+        /// 根据手动保存音效预设生成 16-bit PCM WAV 字节数组（当外部实录文件缺失时的程序化兜底）
+        /// </summary>
+        public static byte[] GenerateSaveSound(string saveTheme)
+        {
+            string normalized = (saveTheme ?? string.Empty).Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(normalized) || normalized == "none")
+            {
+                return Array.Empty<byte>();
+            }
+            return GenerateEnterBell();
+        }
+
+        /// <summary>
+        /// 生成独立的黄铜回车/保存长铃音效（C7 2093Hz + 谐波指数衰减，约 520ms）
         /// </summary>
         public static byte[] GenerateEnterBell()
         {
@@ -64,7 +137,7 @@ namespace Journal.Services
         }
 
         /// <summary>
-        /// 复古打字机声学物理建模
+        /// 复古打字机声学物理建模（温润铁质字锤 + 木质胶辊共鸣，消除高频刺耳尖峰与首尾阶跃）
         /// </summary>
         private static byte[] GenerateTypewriter(int variant)
         {
@@ -98,34 +171,41 @@ namespace Journal.Services
                 return BuildWavFile(samples);
             }
 
-            // 常规按键 (35~42ms)：字锤撞击色带/纸张金属脆响 + 木质胶辊吸收共鸣
-            double duration = variant == 3 ? 0.048 : 0.038;
+            bool isSpecial = IsSpecialVariant(variant);
+            var (pitchMul, decayMul, gainMul) = GetMicroVariation(variant);
+
+            // 常规按键 (38~48ms)：温润字锤撞击色带 + 胶辊浑厚吸收共鸣
+            double duration = isSpecial ? 0.048 : 0.038;
             int total = (int)(SampleRate * duration);
             short[] clickSamples = new short[total];
-            var rng = new Random(variant * 101);
+            var rng = new Random(variant * 101 + 17);
 
-            double baseFreq = variant switch
-            {
-                0 => 3250.0,
-                1 => 3100.0,
-                2 => 3400.0,
-                _ => 2700.0 // 特殊键稍低沉
-            };
+            // 避开 3.5kHz 人耳耳道刺耳共振区，采用 2350Hz 温润金属频段 + 440Hz 胶辊低频
+            double baseFreq = (isSpecial ? 1980.0 : 2350.0) * pitchMul;
+            double platenFreq = 440.0 * (0.95 + 0.05 * pitchMul);
+            double filteredNoise = 0.0;
+            int fadeOutSamples = (int)(SampleRate * 0.005);
 
             for (int i = 0; i < total; i++)
             {
                 double t = (double)i / SampleRate;
-                double env = Math.Exp(-120.0 * t); // 极速指数衰减
+                double attack = Math.Min(1.0, (i + 1) / 30.0); // ~0.7ms 平滑起音，消除 t=0 爆音阶跃
+                double tail = (i >= total - fadeOutSamples)
+                    ? 0.5 * (1.0 + Math.Cos(Math.PI * (i - (total - fadeOutSamples)) / fadeOutSamples))
+                    : 1.0;
+                double env = Math.Exp(-125.0 * decayMul * t) * attack * tail;
 
-                // 金属字模尖锐冲击
-                double metal = Math.Sin(2.0 * Math.PI * baseFreq * t);
-                // 纸张色带高频摩擦杂音
-                double noise = (rng.NextDouble() * 2.0 - 1.0) * Math.Exp(-200.0 * t) * 0.4;
+                // 金属字模冲击
+                double metal = Math.Sin(2.0 * Math.PI * baseFreq * t) * 0.48;
+                // 一阶低通平滑后的色带摩擦音（消除单采样点白噪声毛刺）
+                double rawNoise = rng.NextDouble() * 2.0 - 1.0;
+                filteredNoise = filteredNoise * 0.62 + rawNoise * 0.38;
+                double noise = filteredNoise * Math.Exp(-180.0 * decayMul * t) * 0.30;
                 // 底盘滚筒低频回弹共鸣
-                double platen = Math.Sin(2.0 * Math.PI * 480.0 * t) * 0.45 * Math.Exp(-70.0 * t);
+                double platen = Math.Sin(2.0 * Math.PI * platenFreq * t) * 0.52 * Math.Exp(-75.0 * decayMul * t);
 
-                double wave = (metal * 0.6 + noise + platen) * env;
-                clickSamples[i] = ClampToShort(wave * 25000.0);
+                double wave = (metal + noise + platen) * env * gainMul;
+                clickSamples[i] = ClampToShort(wave * 21500.0);
             }
 
             return BuildWavFile(clickSamples);
@@ -137,19 +217,16 @@ namespace Journal.Services
         /// </summary>
         private static byte[] GenerateCherryBlue(int variant)
         {
-            double duration = variant == 4 ? 0.042 : (variant == 3 ? 0.036 : 0.028);
+            bool isSpecial = IsSpecialVariant(variant);
+            var (pitchMul, decayMul, gainMul) = GetMicroVariation(variant);
+
+            double duration = variant == 4 ? 0.042 : (isSpecial ? 0.036 : 0.028);
             int total = (int)(SampleRate * duration);
             short[] samples = new short[total];
             var rng = new Random(variant * 77 + 13);
 
-            double snapFreq = variant switch
-            {
-                0 => 3650.0,
-                1 => 3550.0,
-                2 => 3780.0,
-                3 => 3300.0,
-                _ => 3450.0
-            };
+            double snapFreq = (variant == 4 ? 3450.0 : (isSpecial ? 3300.0 : 3650.0)) * pitchMul;
+            double bottomFreq = 950.0 * (0.93 + 0.07 * pitchMul);
 
             for (int i = 0; i < total; i++)
             {
@@ -167,11 +244,11 @@ namespace Journal.Services
                 if (t >= 0.004)
                 {
                     double bt = t - 0.004;
-                    double env = Math.Exp(-110.0 * bt);
-                    bottomOut = (Math.Sin(2.0 * Math.PI * 950.0 * bt) * 0.7 + (rng.NextDouble() * 2.0 - 1.0) * 0.2) * env;
+                    double env = Math.Exp(-110.0 * decayMul * bt);
+                    bottomOut = (Math.Sin(2.0 * Math.PI * bottomFreq * bt) * 0.7 + (rng.NextDouble() * 2.0 - 1.0) * 0.2) * env;
                 }
 
-                double wave = clickSnap * 0.65 + bottomOut * 0.55;
+                double wave = (clickSnap * 0.65 + bottomOut * 0.55) * gainMul;
                 samples[i] = ClampToShort(wave * 26000.0);
             }
 
@@ -184,19 +261,15 @@ namespace Journal.Services
         /// </summary>
         private static byte[] GenerateCherryBrown(int variant)
         {
-            double duration = variant == 4 ? 0.040 : (variant == 3 ? 0.035 : 0.026);
+            bool isSpecial = IsSpecialVariant(variant);
+            var (pitchMul, decayMul, gainMul) = GetMicroVariation(variant);
+
+            double duration = variant == 4 ? 0.040 : (isSpecial ? 0.035 : 0.026);
             int total = (int)(SampleRate * duration);
             short[] samples = new short[total];
             var rng = new Random(variant * 61 + 31);
 
-            double thockFreq = variant switch
-            {
-                0 => 620.0,
-                1 => 580.0,
-                2 => 660.0,
-                3 => 520.0,
-                _ => 590.0
-            };
+            double thockFreq = (variant == 4 ? 590.0 : (isSpecial ? 520.0 : 620.0)) * pitchMul;
 
             for (int i = 0; i < total; i++)
             {
@@ -205,15 +278,15 @@ namespace Journal.Services
                 double bump = 0.0;
                 if (t < 0.007)
                 {
-                    bump = Math.Sin(2.0 * Math.PI * 1350.0 * t) * (1.0 - t / 0.007) * 0.35;
+                    bump = Math.Sin(2.0 * Math.PI * 1350.0 * pitchMul * t) * (1.0 - t / 0.007) * 0.35;
                 }
 
                 // 触底厚重沉闷声音 (Thock)
-                double thock = Math.Sin(2.0 * Math.PI * thockFreq * t) * Math.Exp(-85.0 * t) * 0.75;
+                double thock = Math.Sin(2.0 * Math.PI * thockFreq * t) * Math.Exp(-85.0 * decayMul * t) * 0.75;
                 // 塑料壳体漫反射杂音
-                double plastic = (rng.NextDouble() * 2.0 - 1.0) * Math.Exp(-160.0 * t) * 0.25;
+                double plastic = (rng.NextDouble() * 2.0 - 1.0) * Math.Exp(-160.0 * decayMul * t) * 0.25;
 
-                double wave = bump + thock + plastic;
+                double wave = (bump + thock + plastic) * gainMul;
                 samples[i] = ClampToShort(wave * 24000.0);
             }
 
@@ -222,41 +295,46 @@ namespace Journal.Services
 
         /// <summary>
         /// Cherry 红轴（Red Switch）声学物理建模：
-        /// 纯粹线性无段落，POM 轴心滑轨极细阻尼 + 480Hz 铝合金定位板消音垫柔和触底
+        /// 纯粹线性无段落，POM 轴心低通柔化滑轨阻尼 + 480Hz 消音垫柔和触底（消除高频白噪爆音与截断阶跃）
         /// </summary>
         private static byte[] GenerateCherryRed(int variant)
         {
-            double duration = variant == 4 ? 0.038 : (variant == 3 ? 0.032 : 0.024);
+            bool isSpecial = IsSpecialVariant(variant);
+            var (pitchMul, decayMul, gainMul) = GetMicroVariation(variant);
+
+            double duration = variant == 4 ? 0.038 : (isSpecial ? 0.032 : 0.026);
             int total = (int)(SampleRate * duration);
             short[] samples = new short[total];
             var rng = new Random(variant * 47 + 19);
 
-            double bottomFreq = variant switch
-            {
-                0 => 490.0,
-                1 => 470.0,
-                2 => 515.0,
-                3 => 440.0,
-                _ => 480.0
-            };
+            double bottomFreq = (variant == 4 ? 465.0 : (isSpecial ? 430.0 : 480.0)) * pitchMul;
+            double filteredGlide = 0.0;
+            int fadeOutSamples = (int)(SampleRate * 0.006);
 
             for (int i = 0; i < total; i++)
             {
                 double t = (double)i / SampleRate;
-                // 导轨顺滑超微杂音 (0~5ms)
+                double attack = Math.Min(1.0, (i + 1) / 36.0); // ~0.8ms 平滑起音
+                double tail = (i >= total - fadeOutSamples)
+                    ? 0.5 * (1.0 + Math.Cos(Math.PI * (i - (total - fadeOutSamples)) / fadeOutSamples))
+                    : 1.0;
+
+                // 导轨顺滑超微摩擦（经低通平滑，杜绝高频毛刺爆音）
                 double glide = 0.0;
                 if (t < 0.006)
                 {
-                    glide = (rng.NextDouble() * 2.0 - 1.0) * (1.0 - t / 0.006) * 0.15;
+                    double raw = rng.NextDouble() * 2.0 - 1.0;
+                    filteredGlide = filteredGlide * 0.80 + raw * 0.20;
+                    glide = filteredGlide * (1.0 - t / 0.006) * 0.06;
                 }
 
                 // 柔和消音触底
-                double bottom = Math.Sin(2.0 * Math.PI * bottomFreq * t) * Math.Exp(-115.0 * t) * 0.70;
+                double bottom = Math.Sin(2.0 * Math.PI * bottomFreq * t) * Math.Exp(-115.0 * decayMul * t) * 0.72;
                 // 键帽回弹轻微低频 (180Hz)
-                double rebound = Math.Sin(2.0 * Math.PI * 180.0 * t) * Math.Exp(-80.0 * t) * 0.25;
+                double rebound = Math.Sin(2.0 * Math.PI * 180.0 * pitchMul * t) * Math.Exp(-95.0 * decayMul * t) * 0.22;
 
-                double wave = glide + bottom + rebound;
-                samples[i] = ClampToShort(wave * 22000.0);
+                double wave = (glide + bottom + rebound) * attack * tail * gainMul;
+                samples[i] = ClampToShort(wave * 21000.0);
             }
 
             return BuildWavFile(samples);
@@ -268,27 +346,16 @@ namespace Journal.Services
         /// </summary>
         private static byte[] GenerateMahjongThock(int variant)
         {
-            double duration = variant == 4 ? 0.045 : (variant == 3 ? 0.036 : 0.028);
+            bool isSpecial = IsSpecialVariant(variant);
+            var (pitchMul, decayMul, gainMul) = GetMicroVariation(variant);
+
+            double duration = variant == 4 ? 0.045 : (isSpecial ? 0.036 : 0.028);
             int total = (int)(SampleRate * duration);
             short[] samples = new short[total];
             var rng = new Random(variant * 89 + 53);
 
-            double snapFreq = variant switch
-            {
-                0 => 2050.0,
-                1 => 1950.0,
-                2 => 2180.0,
-                3 => 1820.0,
-                _ => 2000.0
-            };
-            double thockFreq = variant switch
-            {
-                0 => 410.0,
-                1 => 380.0,
-                2 => 435.0,
-                3 => 350.0,
-                _ => 395.0
-            };
+            double snapFreq = (variant == 4 ? 2000.0 : (isSpecial ? 1820.0 : 2050.0)) * pitchMul;
+            double thockFreq = (variant == 4 ? 395.0 : (isSpecial ? 350.0 : 410.0)) * pitchMul;
 
             for (int i = 0; i < total; i++)
             {
@@ -301,13 +368,13 @@ namespace Journal.Services
                 }
 
                 // 饱满厚润石墨烯 Thock 声学共振
-                double thock = Math.Sin(2.0 * Math.PI * thockFreq * t) * Math.Exp(-65.0 * t) * 0.75;
+                double thock = Math.Sin(2.0 * Math.PI * thockFreq * t) * Math.Exp(-65.0 * decayMul * t) * 0.75;
                 // PC 聚碳酸酯定位板高频回润
-                double poly = Math.Sin(2.0 * Math.PI * (thockFreq * 2.8) * t) * Math.Exp(-110.0 * t) * 0.25;
+                double poly = Math.Sin(2.0 * Math.PI * (thockFreq * 2.8) * t) * Math.Exp(-110.0 * decayMul * t) * 0.25;
                 // 水灵微气流
-                double air = (rng.NextDouble() * 2.0 - 1.0) * Math.Exp(-200.0 * t) * 0.15;
+                double air = (rng.NextDouble() * 2.0 - 1.0) * Math.Exp(-200.0 * decayMul * t) * 0.15;
 
-                double wave = snap + thock + poly + air;
+                double wave = (snap + thock + poly + air) * gainMul;
                 samples[i] = ClampToShort(wave * 26000.0);
             }
 
@@ -320,28 +387,24 @@ namespace Journal.Services
         /// </summary>
         private static byte[] GenerateRaindropSlate(int variant)
         {
-            double duration = variant == 4 ? 0.065 : (variant == 3 ? 0.048 : 0.038);
+            bool isSpecial = IsSpecialVariant(variant);
+            var (pitchMul, decayMul, gainMul) = GetMicroVariation(variant);
+
+            double duration = variant == 4 ? 0.065 : (isSpecial ? 0.048 : 0.038);
             int total = (int)(SampleRate * duration);
             short[] samples = new short[total];
 
-            double startFreq = variant switch
-            {
-                0 => 1420.0,
-                1 => 1350.0,
-                2 => 1510.0,
-                3 => 1280.0,
-                _ => 1380.0
-            };
+            double startFreq = (variant == 4 ? 1380.0 : (isSpecial ? 1280.0 : 1420.0)) * pitchMul;
 
             for (int i = 0; i < total; i++)
             {
                 double t = (double)i / SampleRate;
                 // 瞬态指数滑频水泡共振
-                double freqMod = startFreq + 750.0 * Math.Pow(t / duration, 0.45);
-                double plop = Math.Sin(2.0 * Math.PI * freqMod * t) * Math.Exp(-70.0 * t);
+                double freqMod = startFreq + 750.0 * pitchMul * Math.Pow(t / duration, 0.45);
+                double plop = Math.Sin(2.0 * Math.PI * freqMod * t) * Math.Exp(-70.0 * decayMul * t);
 
                 // 青石空腔微弱回音 (620Hz)
-                double stone = Math.Sin(2.0 * Math.PI * 620.0 * t) * Math.Exp(-45.0 * t) * 0.25;
+                double stone = Math.Sin(2.0 * Math.PI * 620.0 * pitchMul * t) * Math.Exp(-45.0 * decayMul * t) * 0.25;
 
                 // 回车键双水滴连击
                 double drop2 = 0.0;
@@ -352,7 +415,7 @@ namespace Journal.Services
                     drop2 = Math.Sin(2.0 * Math.PI * freq2 * t2) * Math.Exp(-75.0 * t2) * 0.65;
                 }
 
-                double wave = (plop * 0.75 + stone * 0.25 + drop2);
+                double wave = (plop * 0.75 + stone * 0.25 + drop2) * gainMul;
                 samples[i] = ClampToShort(wave * 23000.0);
             }
 
@@ -365,32 +428,28 @@ namespace Journal.Services
         /// </summary>
         private static byte[] GenerateOldMembrane(int variant)
         {
-            double duration = variant == 4 ? 0.042 : (variant == 3 ? 0.035 : 0.026);
+            bool isSpecial = IsSpecialVariant(variant);
+            var (pitchMul, decayMul, gainMul) = GetMicroVariation(variant);
+
+            double duration = variant == 4 ? 0.042 : (isSpecial ? 0.035 : 0.026);
             int total = (int)(SampleRate * duration);
             short[] samples = new short[total];
             var rng = new Random(variant * 51 + 7);
 
-            double thudFreq = variant switch
-            {
-                0 => 330.0,
-                1 => 310.0,
-                2 => 355.0,
-                3 => 290.0,
-                _ => 320.0
-            };
+            double thudFreq = (variant == 4 ? 320.0 : (isSpecial ? 290.0 : 330.0)) * pitchMul;
 
             for (int i = 0; i < total; i++)
             {
                 double t = (double)i / SampleRate;
                 // 硅胶碗形变沉闷碰撞
-                double dome = Math.Sin(2.0 * Math.PI * thudFreq * t) * Math.Exp(-95.0 * t) * 0.80;
+                double dome = Math.Sin(2.0 * Math.PI * thudFreq * t) * Math.Exp(-95.0 * decayMul * t) * 0.80;
                 // 塑料导向柱滑动漫反射
-                double friction = (rng.NextDouble() * 2.0 - 1.0) * Math.Exp(-140.0 * t) * 0.20;
+                double friction = (rng.NextDouble() * 2.0 - 1.0) * Math.Exp(-140.0 * decayMul * t) * 0.20;
 
                 // 回车键钢丝平衡杆轻微共鸣
                 double wire = variant == 4 ? (Math.Sin(2.0 * Math.PI * 240.0 * t) * Math.Exp(-70.0 * t) * 0.25) : 0.0;
 
-                double wave = dome + friction + wire;
+                double wave = (dome + friction + wire) * gainMul;
                 samples[i] = ClampToShort(wave * 24000.0);
             }
 
@@ -403,32 +462,28 @@ namespace Journal.Services
         /// </summary>
         private static byte[] GenerateWoodBlock(int variant)
         {
-            double duration = variant == 4 ? 0.060 : (variant == 3 ? 0.045 : 0.035);
+            bool isSpecial = IsSpecialVariant(variant);
+            var (pitchMul, decayMul, gainMul) = GetMicroVariation(variant);
+
+            double duration = variant == 4 ? 0.060 : (isSpecial ? 0.045 : 0.035);
             int total = (int)(SampleRate * duration);
             short[] samples = new short[total];
 
-            double baseFreq = variant switch
-            {
-                0 => 820.0,
-                1 => 790.0,
-                2 => 860.0,
-                3 => 730.0,
-                _ => 650.0 // 回车键为深沉大檀木磐音
-            };
+            double baseFreq = (variant == 4 ? 650.0 : (isSpecial ? 730.0 : 820.0)) * pitchMul;
 
             for (int i = 0; i < total; i++)
             {
                 double t = (double)i / SampleRate;
-                double decay = Math.Exp(-55.0 * t);
+                double decay = Math.Exp(-55.0 * decayMul * t);
 
                 // 实体檀木瞬态打击
                 double tone1 = Math.Sin(2.0 * Math.PI * baseFreq * t) * 0.75;
                 // 空腔二次谐波
                 double tone2 = Math.Sin(2.0 * Math.PI * (baseFreq * 2.0) * t) * 0.25;
                 // 微弱木质敲击接触噪声 (0~4ms)
-                double woodHit = (t < 0.005) ? (Math.Sin(2.0 * Math.PI * 3200.0 * t) * (1.0 - t / 0.005) * 0.30) : 0.0;
+                double woodHit = (t < 0.005) ? (Math.Sin(2.0 * Math.PI * 3200.0 * pitchMul * t) * (1.0 - t / 0.005) * 0.30) : 0.0;
 
-                double wave = (tone1 + tone2) * decay + woodHit;
+                double wave = ((tone1 + tone2) * decay + woodHit) * gainMul;
                 samples[i] = ClampToShort(wave * 25000.0);
             }
 
@@ -442,7 +497,8 @@ namespace Journal.Services
         {
             if (wavBytes == null || wavBytes.Length <= 44) return wavBytes ?? Array.Empty<byte>();
 
-            byte[] result = new byte[wavBytes.Length];
+            // 分配于固定对象堆（POH），保证 WinMM PlaySound(SND_MEMORY | SND_ASYNC) 异步播放期间地址绝对固定不发生 GC 搬迁爆音
+            byte[] result = GC.AllocateArray<byte>(wavBytes.Length, pinned: true);
             Buffer.BlockCopy(wavBytes, 0, result, 0, 44); // 复制 RIFF 头部
 
             // 16-bit PCM 样本从第 44 字节开始
@@ -462,7 +518,7 @@ namespace Journal.Services
         }
 
         /// <summary>
-        /// 确保 Assets/Audio/ 目录中写入完整的 16-bit PCM WAV 资源文件
+        /// 确保 Assets/Audio/ 目录中写入完整的 16-bit PCM WAV 资源文件（含 10 变体普通键、3 变体大键与保存音效）
         /// </summary>
         public static void EnsureAudioAssetsWritten(string baseAssetsDir)
         {
@@ -473,7 +529,9 @@ namespace Journal.Services
                 {
                     "Typewriter", "CherryBlue", "CherryBrown",
                     "CherryRed", "MahjongThock", "RaindropSlate",
-                    "OldMembrane", "WoodBlock"
+                    "OldMembrane", "WoodBlock",
+                    "VintageTypewriterPro", "ClassicTypewriterReal",
+                    "IPhoneKeyboard", "DataMatrixSfx"
                 };
 
                 foreach (var theme in themes)
@@ -484,16 +542,27 @@ namespace Journal.Services
                         Directory.CreateDirectory(themeDir);
                     }
 
-                    string[] files = { "click1.wav", "click2.wav", "click3.wav", "special.wav", "enter.wav" };
-                    for (int v = 0; v < files.Length; v++)
+                    foreach (var (fileName, variantCode) in ThemeAssetEntries)
                     {
-                        string filePath = Path.Combine(themeDir, files[v]);
+                        string filePath = Path.Combine(themeDir, fileName);
                         if (!File.Exists(filePath))
                         {
-                            byte[] wav = Generate(theme, v);
+                            byte[] wav = Generate(theme, variantCode);
                             File.WriteAllBytes(filePath, wav);
                         }
                     }
+                }
+
+                // 确保手动保存音效目录与默认铜铃预设存在
+                string saveDir = Path.Combine(audioDir, "Save");
+                if (!Directory.Exists(saveDir))
+                {
+                    Directory.CreateDirectory(saveDir);
+                }
+                string saveBellPath = Path.Combine(saveDir, "TypewriterBell.wav");
+                if (!File.Exists(saveBellPath))
+                {
+                    File.WriteAllBytes(saveBellPath, GenerateSaveSound("TypewriterBell"));
                 }
             }
             catch (Exception ex)

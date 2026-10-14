@@ -107,7 +107,7 @@
 
                     <!-- 手动保存按钮 (Ctrl+S) -->
                     <Button Style="{ThemeResource SubtleButtonStyle}" Padding="8,5"
-                            Command="{x:Bind ViewModel.SaveCurrentCommand}"
+                            Click="ManualSaveButton_Click"
                             ToolTipService.ToolTip="保存日记 (Ctrl+S)">
                         <StackPanel Orientation="Horizontal" Spacing="4">
                             <FontIcon Glyph="&#xE74E;" FontSize="12"/>

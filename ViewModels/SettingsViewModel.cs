@@ -31,14 +31,24 @@ namespace Journal.ViewModels
 
         public List<SelectionOptionItem> AvailableSoundThemeOptions { get; } = new()
         {
-            new() { Id = "Typewriter", Title = "复古打字机", Subtitle = "黄铜机械滑架与清脆铃铛" },
-            new() { Id = "CherryBlue", Title = "Cherry 青轴", Subtitle = "段落清脆双重咔嗒声" },
-            new() { Id = "CherryBrown", Title = "Cherry 茶轴", Subtitle = "微段落柔和触底回弹" },
-            new() { Id = "CherryRed", Title = "Cherry 红轴", Subtitle = "顺滑线性轻音 POM 阻尼" },
-            new() { Id = "MahjongThock", Title = "客制化 HiFi 麻将音", Subtitle = "玉石骨传导石墨烯厚润触底" },
-            new() { Id = "RaindropSlate", Title = "空山听雨 (青石水滴)", Subtitle = "Minnaert 清泉水泡与石阶微鸣" },
-            new() { Id = "OldMembrane", Title = "怀旧电脑室薄膜", Subtitle = "经典大行程硅胶碗沉稳回弹" },
-            new() { Id = "WoodBlock", Title = "静修木鱼 (檀木禅敲)", Subtitle = "纯净空灵檀木空腔敲击" }
+            new() { Id = "Typewriter", Title = "复古打字机", Subtitle = "机械字锤敲击与回车铃声" },
+            new() { Id = "CherryBlue", Title = "Cherry 青轴", Subtitle = "清脆段落咔嗒声" },
+            new() { Id = "CherryBrown", Title = "Cherry 茶轴", Subtitle = "轻微段落柔和回弹" },
+            new() { Id = "CherryRed", Title = "Cherry 红轴", Subtitle = "顺滑直上直下轻音" },
+            new() { Id = "MahjongThock", Title = "麻将音", Subtitle = "饱满圆润的客制化键音" },
+            new() { Id = "RaindropSlate", Title = "水滴声", Subtitle = "清澈水滴落石声" },
+            new() { Id = "OldMembrane", Title = "薄膜键盘", Subtitle = "老式台式机键盘闷响" },
+            new() { Id = "WoodBlock", Title = "木鱼", Subtitle = "温润木鱼敲击声" },
+            new() { Id = "VintageTypewriterPro", Title = "机械打字机", Subtitle = "重锤机械打字机实录" },
+            new() { Id = "ClassicTypewriterReal", Title = "老式打字机", Subtitle = "经典铁质打字机实录" },
+            new() { Id = "IPhoneKeyboard", Title = "iPhone 键盘", Subtitle = "手机触屏按键音实录" },
+            new() { Id = "DataMatrixSfx", Title = "电报音", Subtitle = "高频数字脉冲音效" }
+        };
+
+        public List<SelectionOptionItem> AvailableSaveSoundThemeOptions { get; } = new()
+        {
+            new() { Id = "TypewriterBell", Title = "打字机铃声", Subtitle = "手动保存时播放打字机铜铃声" },
+            new() { Id = "None", Title = "无", Subtitle = "手动保存时不播放提示音" }
         };
 
         public List<string> AvailableFontFamilies => FontService.Instance.GetInstalledFontFamilies();
@@ -66,6 +76,9 @@ namespace Journal.ViewModels
 
         [ObservableProperty]
         private string _selectedTheme = "Typewriter";
+
+        [ObservableProperty]
+        private string _selectedSaveTheme = "TypewriterBell";
 
         [ObservableProperty]
         private double _soundVolumePercent = 80.0;
@@ -101,7 +114,7 @@ namespace Journal.ViewModels
         private string _storageDirectoryPath = string.Empty;
 
         [ObservableProperty]
-        private string _appVersionText = "Jot v1.1.0";
+        private string _appVersionText = "Jot v1.2.0";
 
         [ObservableProperty]
         private string _samplePreviewText = "天地者万物之逆旅也，光阴者百代之过客也。";
@@ -162,6 +175,7 @@ namespace Journal.ViewModels
             {
                 IsSoundEnabled = s.IsSoundEnabled;
                 SelectedTheme = s.SoundTheme;
+                SelectedSaveTheme = string.IsNullOrWhiteSpace(s.SaveSoundTheme) ? "TypewriterBell" : s.SaveSoundTheme;
                 SoundVolumePercent = Math.Round(s.SoundVolume * 100.0, 0);
 
                 IsHapticVibrationEnabled = s.IsHapticVibrationEnabled;
@@ -216,6 +230,22 @@ namespace Journal.ViewModels
                 _settingsService.Update(s => s.SoundTheme = value);
                 _soundService.SetTheme(value);
                 _soundService.PlayKeyClick();
+            }
+            finally
+            {
+                _isSavingLocally = false;
+            }
+        }
+
+        partial void OnSelectedSaveThemeChanged(string value)
+        {
+            if (_isUpdatingFromModel || _isSavingLocally) return;
+            _isSavingLocally = true;
+            try
+            {
+                _settingsService.Update(s => s.SaveSoundTheme = value);
+                _soundService.SetSaveTheme(value);
+                _soundService.PlaySaveSound();
             }
             finally
             {
@@ -409,6 +439,12 @@ namespace Journal.ViewModels
         public void PreviewEnterSound()
         {
             _soundService.PlayEnterKey();
+        }
+
+        [RelayCommand]
+        public void PreviewSaveSound()
+        {
+            _soundService.PlaySaveSound();
         }
 
         [RelayCommand]

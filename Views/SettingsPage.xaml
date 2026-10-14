@@ -56,23 +56,45 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="音效主题" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
-                                <ComboBox Grid.Column="1" MinWidth="220"
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock Text="打字音效主题" FontSize="13" FontWeight="Medium"/>
+                                    <TextBlock Text="支持多变体随机防重复切换，模拟真实物理击键微小差异"
+                                               FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                                </StackPanel>
+                                <ComboBox Grid.Column="1" MinWidth="240" VerticalAlignment="Center"
                                           ItemsSource="{x:Bind ViewModel.AvailableSoundThemeOptions, Mode=OneWay}"
                                           DisplayMemberPath="Title"
                                           SelectedValuePath="Id"
                                           SelectedValue="{x:Bind ViewModel.SelectedTheme, Mode=TwoWay}"/>
                             </Grid>
 
+                            <!-- 手动保存音效预设选择 -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock Text="手动保存音效" FontSize="13" FontWeight="Medium"/>
+                                    <TextBlock Text="按 Ctrl+S 或点击保存按钮时的专属反馈音（自动保存不触发）"
+                                               FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                                </StackPanel>
+                                <ComboBox Grid.Column="1" MinWidth="240" VerticalAlignment="Center"
+                                          ItemsSource="{x:Bind ViewModel.AvailableSaveSoundThemeOptions, Mode=OneWay}"
+                                          DisplayMemberPath="Title"
+                                          SelectedValuePath="Id"
+                                          SelectedValue="{x:Bind ViewModel.SelectedSaveTheme, Mode=TwoWay}"/>
+                            </Grid>
+
                             <!-- 音量调节与试听按钮组 -->
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="220"/>
+                                    <ColumnDefinition Width="240"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="音效音量" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                                    <Slider Minimum="0" Maximum="100" StepFrequency="1" Width="140"
+                                    <Slider Minimum="0" Maximum="100" StepFrequency="1" Width="160"
                                             Value="{x:Bind ViewModel.SoundVolumePercent, Mode=TwoWay}"/>
                                     <TextBlock Text="{x:Bind ViewModel.SoundVolumePercent, Mode=OneWay}" VerticalAlignment="Center"
                                                Width="32" FontSize="12" FontWeight="SemiBold"/>
@@ -85,6 +107,8 @@
                                         Command="{x:Bind ViewModel.PreviewKeySoundCommand}"/>
                                 <Button Content="试听回车音" Style="{ThemeResource SubtleButtonStyle}" Padding="12,6"
                                         Command="{x:Bind ViewModel.PreviewEnterSoundCommand}"/>
+                                <Button Content="试听保存音" Style="{ThemeResource SubtleButtonStyle}" Padding="12,6"
+                                        Command="{x:Bind ViewModel.PreviewSaveSoundCommand}"/>
                             </StackPanel>
                         </StackPanel>
                     </StackPanel>

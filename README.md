@@ -4,7 +4,7 @@
   <p><strong>A simple and elegant journaling app · 纯粹、优雅的桌面沉浸式日记应用</strong></p>
   <p>
     <a href="https://github.com/met-tk/Jot/releases/latest">
-      <img src="https://img.shields.io/badge/Release-v1.1.0-107C41?style=flat-square" alt="Release v1.1.0" />
+      <img src="https://img.shields.io/badge/Release-v1.2.0-107C41?style=flat-square" alt="Release v1.2.0" />
     </a>
     <img src="https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D4?style=flat-square" alt="Platform" />
     <img src="https://img.shields.io/badge/Framework-.NET%208%20%2B%20WinUI%203-512BD4?style=flat-square" alt="Framework" />
@@ -25,7 +25,7 @@
 ## 🖼️ 界面预览 (Screenshots)
 
 ### 1. 今日随记 · 沉浸式书写空间
-简洁专注的纸面编辑体验，支持一键插入 `[HH:mm:ss]` 时间戳（`Ctrl+T`）、自动保存与草稿保持、纸面微震动回弹，以及 8 种客制化物理击键音效。
+简洁专注的纸面编辑体验，支持一键插入 `[HH:mm:ss]` 时间戳（`Ctrl+T`）、自动保存与草稿保持、纸面微震动回弹，以及 12 种多变体物理击键音效与手动保存音效。
 
 ![今日随记](https://raw.githubusercontent.com/met-tk/Jot/main/%E7%A4%BA%E4%BE%8B/19cb3e18bdf75c6e12bc6c0d9c63e7df.png)
 
@@ -63,7 +63,7 @@
 
 ## 🚀 核心特性 (Key Features)
 
-- **🎹 8 款沉浸式声学反馈**：内置复古打字机（含回车黄铜铃声）、Cherry 青轴/茶轴/红轴、客制化 HiFi 麻将音、空山听雨（青石水滴）、怀旧薄膜键盘、静修木鱼（檀木禅敲），支持中文输入法整句上屏音效与独立音量调节。
+- **🎹 12 款多变体沉浸式声学反馈 + 手动保存音效预设**：内置复古打字机（含回车黄铜铃声）、Cherry 青轴/茶轴/红轴、客制化 HiFi 麻将音、空山听雨（青石水滴）、怀旧薄膜键盘、静修木鱼（檀木禅敲），以及古董重锤打字机、经典机械打字机、iPhone 触屏按键、矩阵数据流 4 款实录采样主题；每款主题配备 10 组普通击键与 3 组大键微差变体及防重复洗牌引擎，并支持手动保存（`Ctrl+S` / 保存按钮）独立音效预设（如打字机清脆铜铃）、中文输入法整句上屏音效与独立音量调节。
 - **🎨 4 种窗口材质 × 6 套氛围色调**：
   - **系统材质**：`Mica Alt`（深层云母）、`Mica`（原生云母）、`Acrylic`（亚克力毛玻璃）、`Solid`（纯色经典零透光）。
   - **氛围色板**：默认翡翠绿、米黄纸色（暖琥珀）、纯黑（极夜天际冷蓝）、青墨（苍松黛青）、浅紫（暮色紫罗兰）、复古暖褐（古籍焦糖），支持 0%~90% 底色浓度自由微调。
@@ -77,7 +77,7 @@
 
 ## 📦 下载与安装 (Installation)
 
-前往 [**Releases 页面**](https://github.com/met-tk/Jot/releases/latest) 下载最新安装包 **`Jot_Setup_v1.1.0.exe`**：
+前往 [**Releases 页面**](https://github.com/met-tk/Jot/releases/latest) 下载最新安装包 **`Jot_Setup_v1.2.0.exe`**：
 - 内置独立 .NET 8 与 Windows App SDK 运行时，**无需额外安装任何环境**，双击即可完成安装与桌面快捷方式创建。
 
 ---

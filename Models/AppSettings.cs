@@ -9,7 +9,8 @@ namespace Journal.Models
     {
         // 1. 声音与物理音效配置
         public bool IsSoundEnabled { get; set; } = true;
-        public string SoundTheme { get; set; } = "Typewriter"; // "Typewriter", "CherryBlue", "CherryBrown"
+        public string SoundTheme { get; set; } = "Typewriter";
+        public string SaveSoundTheme { get; set; } = "TypewriterBell"; // "TypewriterBell", "None" 等手动保存音效预设
         public double SoundVolume { get; set; } = 0.8; // 0.0 ~ 1.0
 
         // 2. 拟物手感与触觉微动效
@@ -89,6 +90,7 @@ namespace Journal.Models
             {
                 IsSoundEnabled = this.IsSoundEnabled,
                 SoundTheme = this.SoundTheme,
+                SaveSoundTheme = this.SaveSoundTheme,
                 SoundVolume = this.SoundVolume,
                 IsHapticVibrationEnabled = this.IsHapticVibrationEnabled,
                 IsCursorPulseEnabled = this.IsCursorPulseEnabled,

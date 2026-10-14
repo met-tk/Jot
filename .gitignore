@@ -34,7 +34,9 @@ artifacts/
 .DS_Store
 Thumbs.db
 *.tmp
-*.bak
 *.swp
 .agents/
 
+# Raw audio materials
+[Ss]ucai/
+素材/
