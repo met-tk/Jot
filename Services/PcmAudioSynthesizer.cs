@@ -1,5 +1,8 @@
 using System;
+using System.Buffers.Binary;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace Journal.Services
 {
@@ -24,7 +27,7 @@ namespace Journal.Services
         /// </summary>
         public const int SpecialVariantCount = 3;
 
-        // 变体编号映射表：保持 0~2 为 click1~3, 3 为 special1, 4 为 enter 以 100% 兼容既有测试；5~11 为 click4~10，12~13 为 special2~3
+        // 变体编号映射表：0~2 为 click1~3, 3 为 special1, 4 为 enter, 5~11 为 click4~10, 12~13 为 special2~3
         private static readonly (string FileName, int VariantCode)[] ThemeAssetEntries =
         {
             ("click1.wav", 0),
@@ -43,7 +46,7 @@ namespace Journal.Services
             ("enter.wav", 4)
         };
 
-        // 模拟真实键盘不同行位（R1~R4）腔体共鸣、手指敲击力度与轴心阻尼微散度表（index 0 保持 1.0 精确基线，散度温和均匀）
+        // 模拟真实键盘不同行位（R1~R4）腔体共鸣、手指敲击力度与轴心阻尼微散度表
         private static readonly double[] ClickPitchFactors = { 1.000, 0.972, 1.024, 0.955, 1.035, 0.984, 1.015, 0.964, 1.028, 0.990 };
         private static readonly double[] ClickDecayFactors = { 1.000, 0.960, 1.040, 0.945, 1.055, 0.975, 1.025, 0.965, 1.035, 0.985 };
         private static readonly double[] ClickGainFactors  = { 1.000, 0.985, 0.990, 0.975, 0.980, 0.995, 0.990, 0.980, 0.985, 0.995 };
@@ -76,8 +79,6 @@ namespace Journal.Services
         /// <summary>
         /// 根据主题与变体编号生成未压缩 16-bit PCM WAV 字节数组
         /// </summary>
-        /// <param name="theme">主题标识</param>
-        /// <param name="variant">0~2, 5~11: click变体(10种); 3, 12~13: 空格/退格等特殊键(3种); 4: 回车键</param>
         public static byte[] Generate(string theme, int variant)
         {
             return (theme ?? string.Empty).Trim().ToLowerInvariant() switch
@@ -118,11 +119,9 @@ namespace Journal.Services
             for (int i = 0; i < numSamples; i++)
             {
                 double t = (double)i / SampleRate;
-                // 铃铛击锤瞬间微弱金属触击 (0~8ms)
                 double strike = (t < 0.008) ? (Math.Sin(2.0 * Math.PI * 4500.0 * t) * (1.0 - t / 0.008) * 0.35) : 0.0;
 
-                // C7 主音 2093Hz + 谐波 4186Hz + 6279Hz
-                double decay = Math.Exp(-7.5 * t); // 柔和悠长衰减
+                double decay = Math.Exp(-7.5 * t);
                 double tone1 = Math.Sin(2.0 * Math.PI * 2093.0 * t) * 0.70;
                 double tone2 = Math.Sin(2.0 * Math.PI * 4186.0 * t) * 0.25;
                 double tone3 = Math.Sin(2.0 * Math.PI * 6279.0 * t) * 0.10;
@@ -136,28 +135,22 @@ namespace Journal.Services
             return BuildWavFile(samples);
         }
 
-        /// <summary>
-        /// 复古打字机声学物理建模（温润铁质字锤 + 木质胶辊共鸣，消除高频刺耳尖峰与首尾阶跃）
-        /// </summary>
         private static byte[] GenerateTypewriter(int variant)
         {
             if (variant == 4)
             {
-                // 回车换行：机架推拉齿轮咔嗒声 + 清脆黄铜铃铛
                 int numSamples = (int)(SampleRate * 0.48);
                 short[] samples = new short[numSamples];
                 for (int i = 0; i < numSamples; i++)
                 {
                     double t = (double)i / SampleRate;
-                    // 前 40ms：滑架齿轮机械复位声 (Escapement rack click)
                     double rack = 0.0;
                     if (t < 0.045)
                     {
-                        double env = (1.0 - t / 0.045);
+                        double env = 1.0 - t / 0.045;
                         rack = (Math.Sin(2.0 * Math.PI * 1400.0 * t) * 0.5 + Math.Sin(2.0 * Math.PI * 450.0 * t) * 0.5) * env * 0.6;
                     }
 
-                    // 15ms 后：铃铛敲击与悠长回荡
                     double bell = 0.0;
                     if (t >= 0.015)
                     {
@@ -174,13 +167,11 @@ namespace Journal.Services
             bool isSpecial = IsSpecialVariant(variant);
             var (pitchMul, decayMul, gainMul) = GetMicroVariation(variant);
 
-            // 常规按键 (38~48ms)：温润字锤撞击色带 + 胶辊浑厚吸收共鸣
             double duration = isSpecial ? 0.048 : 0.038;
             int total = (int)(SampleRate * duration);
             short[] clickSamples = new short[total];
             var rng = new Random(variant * 101 + 17);
 
-            // 避开 3.5kHz 人耳耳道刺耳共振区，采用 2350Hz 温润金属频段 + 440Hz 胶辊低频
             double baseFreq = (isSpecial ? 1980.0 : 2350.0) * pitchMul;
             double platenFreq = 440.0 * (0.95 + 0.05 * pitchMul);
             double filteredNoise = 0.0;
@@ -189,19 +180,16 @@ namespace Journal.Services
             for (int i = 0; i < total; i++)
             {
                 double t = (double)i / SampleRate;
-                double attack = Math.Min(1.0, (i + 1) / 30.0); // ~0.7ms 平滑起音，消除 t=0 爆音阶跃
+                double attack = Math.Min(1.0, (i + 1) / 30.0);
                 double tail = (i >= total - fadeOutSamples)
                     ? 0.5 * (1.0 + Math.Cos(Math.PI * (i - (total - fadeOutSamples)) / fadeOutSamples))
                     : 1.0;
                 double env = Math.Exp(-125.0 * decayMul * t) * attack * tail;
 
-                // 金属字模冲击
                 double metal = Math.Sin(2.0 * Math.PI * baseFreq * t) * 0.48;
-                // 一阶低通平滑后的色带摩擦音（消除单采样点白噪声毛刺）
                 double rawNoise = rng.NextDouble() * 2.0 - 1.0;
                 filteredNoise = filteredNoise * 0.62 + rawNoise * 0.38;
                 double noise = filteredNoise * Math.Exp(-180.0 * decayMul * t) * 0.30;
-                // 底盘滚筒低频回弹共鸣
                 double platen = Math.Sin(2.0 * Math.PI * platenFreq * t) * 0.52 * Math.Exp(-75.0 * decayMul * t);
 
                 double wave = (metal + noise + platen) * env * gainMul;
@@ -211,10 +199,6 @@ namespace Journal.Services
             return BuildWavFile(clickSamples);
         }
 
-        /// <summary>
-        /// Cherry 青轴（Blue Switch）声学物理建模：
-        /// 两段式有声段落轴，3600Hz 弹片瞬间跳脱金属清脆咔哒 + 950Hz 轴芯触底
-        /// </summary>
         private static byte[] GenerateCherryBlue(int variant)
         {
             bool isSpecial = IsSpecialVariant(variant);
@@ -231,7 +215,6 @@ namespace Journal.Services
             for (int i = 0; i < total; i++)
             {
                 double t = (double)i / SampleRate;
-                // 0~6ms: 弹片脱扣咔哒尖峰 (Tactile click)
                 double clickSnap = 0.0;
                 if (t < 0.009)
                 {
@@ -239,7 +222,6 @@ namespace Journal.Services
                     clickSnap = Math.Sin(2.0 * Math.PI * snapFreq * t) * snapEnv;
                 }
 
-                // 4ms 开始: 触底硬碰撞 (Bottom-out on metal plate)
                 double bottomOut = 0.0;
                 if (t >= 0.004)
                 {
@@ -255,10 +237,6 @@ namespace Journal.Services
             return BuildWavFile(samples);
         }
 
-        /// <summary>
-        /// Cherry 茶轴（Brown Switch）声学物理建模：
-        /// 微弱微段落感，无刺耳发声弹片，柔和尼龙滑块摩擦 + 600Hz 敦实沉闷 Thock 触底声
-        /// </summary>
         private static byte[] GenerateCherryBrown(int variant)
         {
             bool isSpecial = IsSpecialVariant(variant);
@@ -274,16 +252,13 @@ namespace Journal.Services
             for (int i = 0; i < total; i++)
             {
                 double t = (double)i / SampleRate;
-                // 极微弱滑块段落阻尼摩擦 (0~5ms)
                 double bump = 0.0;
                 if (t < 0.007)
                 {
                     bump = Math.Sin(2.0 * Math.PI * 1350.0 * pitchMul * t) * (1.0 - t / 0.007) * 0.35;
                 }
 
-                // 触底厚重沉闷声音 (Thock)
                 double thock = Math.Sin(2.0 * Math.PI * thockFreq * t) * Math.Exp(-85.0 * decayMul * t) * 0.75;
-                // 塑料壳体漫反射杂音
                 double plastic = (rng.NextDouble() * 2.0 - 1.0) * Math.Exp(-160.0 * decayMul * t) * 0.25;
 
                 double wave = (bump + thock + plastic) * gainMul;
@@ -293,10 +268,6 @@ namespace Journal.Services
             return BuildWavFile(samples);
         }
 
-        /// <summary>
-        /// Cherry 红轴（Red Switch）声学物理建模：
-        /// 纯粹线性无段落，POM 轴心低通柔化滑轨阻尼 + 480Hz 消音垫柔和触底（消除高频白噪爆音与截断阶跃）
-        /// </summary>
         private static byte[] GenerateCherryRed(int variant)
         {
             bool isSpecial = IsSpecialVariant(variant);
@@ -314,12 +285,11 @@ namespace Journal.Services
             for (int i = 0; i < total; i++)
             {
                 double t = (double)i / SampleRate;
-                double attack = Math.Min(1.0, (i + 1) / 36.0); // ~0.8ms 平滑起音
+                double attack = Math.Min(1.0, (i + 1) / 36.0);
                 double tail = (i >= total - fadeOutSamples)
                     ? 0.5 * (1.0 + Math.Cos(Math.PI * (i - (total - fadeOutSamples)) / fadeOutSamples))
                     : 1.0;
 
-                // 导轨顺滑超微摩擦（经低通平滑，杜绝高频毛刺爆音）
                 double glide = 0.0;
                 if (t < 0.006)
                 {
@@ -328,9 +298,7 @@ namespace Journal.Services
                     glide = filteredGlide * (1.0 - t / 0.006) * 0.06;
                 }
 
-                // 柔和消音触底
                 double bottom = Math.Sin(2.0 * Math.PI * bottomFreq * t) * Math.Exp(-115.0 * decayMul * t) * 0.72;
-                // 键帽回弹轻微低频 (180Hz)
                 double rebound = Math.Sin(2.0 * Math.PI * 180.0 * pitchMul * t) * Math.Exp(-95.0 * decayMul * t) * 0.22;
 
                 double wave = (glide + bottom + rebound) * attack * tail * gainMul;
@@ -340,10 +308,6 @@ namespace Journal.Services
             return BuildWavFile(samples);
         }
 
-        /// <summary>
-        /// 客制化 HiFi 麻将音（Mahjong Thock）声学物理建模：
-        /// 饱满象牙/玛瑙碰撞水灵感，1950Hz~2250Hz 清脆凝练骨传导 + 380Hz~440Hz 石墨烯/乳壳厚润共鸣腔
-        /// </summary>
         private static byte[] GenerateMahjongThock(int variant)
         {
             bool isSpecial = IsSpecialVariant(variant);
@@ -360,18 +324,14 @@ namespace Journal.Services
             for (int i = 0; i < total; i++)
             {
                 double t = (double)i / SampleRate;
-                // 0~4ms 瞬间骨传导玉石碰击清脆高光
                 double snap = 0.0;
                 if (t < 0.005)
                 {
                     snap = Math.Sin(2.0 * Math.PI * snapFreq * t) * (1.0 - t / 0.005) * 0.85;
                 }
 
-                // 饱满厚润石墨烯 Thock 声学共振
                 double thock = Math.Sin(2.0 * Math.PI * thockFreq * t) * Math.Exp(-65.0 * decayMul * t) * 0.75;
-                // PC 聚碳酸酯定位板高频回润
                 double poly = Math.Sin(2.0 * Math.PI * (thockFreq * 2.8) * t) * Math.Exp(-110.0 * decayMul * t) * 0.25;
-                // 水灵微气流
                 double air = (rng.NextDouble() * 2.0 - 1.0) * Math.Exp(-200.0 * decayMul * t) * 0.15;
 
                 double wave = (snap + thock + poly + air) * gainMul;
@@ -381,10 +341,6 @@ namespace Journal.Services
             return BuildWavFile(samples);
         }
 
-        /// <summary>
-        /// 空山听雨·青石水滴（Raindrop Slate）声学物理建模：
-        /// Minnaert 瞬态水跃声，清冽治愈水泡滑音 (1350Hz -> 2150Hz) + 石阶微旷回鸣
-        /// </summary>
         private static byte[] GenerateRaindropSlate(int variant)
         {
             bool isSpecial = IsSpecialVariant(variant);
@@ -399,14 +355,10 @@ namespace Journal.Services
             for (int i = 0; i < total; i++)
             {
                 double t = (double)i / SampleRate;
-                // 瞬态指数滑频水泡共振
                 double freqMod = startFreq + 750.0 * pitchMul * Math.Pow(t / duration, 0.45);
                 double plop = Math.Sin(2.0 * Math.PI * freqMod * t) * Math.Exp(-70.0 * decayMul * t);
-
-                // 青石空腔微弱回音 (620Hz)
                 double stone = Math.Sin(2.0 * Math.PI * 620.0 * pitchMul * t) * Math.Exp(-45.0 * decayMul * t) * 0.25;
 
-                // 回车键双水滴连击
                 double drop2 = 0.0;
                 if (variant == 4 && t >= 0.018)
                 {
@@ -422,10 +374,6 @@ namespace Journal.Services
             return BuildWavFile(samples);
         }
 
-        /// <summary>
-        /// 怀旧薄膜键盘（Old Membrane）声学物理建模：
-        /// 90年代大行程硅胶碗形变与塑料轴柱摩擦，低沉质朴无刺耳杂音 (330Hz)
-        /// </summary>
         private static byte[] GenerateOldMembrane(int variant)
         {
             bool isSpecial = IsSpecialVariant(variant);
@@ -441,12 +389,8 @@ namespace Journal.Services
             for (int i = 0; i < total; i++)
             {
                 double t = (double)i / SampleRate;
-                // 硅胶碗形变沉闷碰撞
                 double dome = Math.Sin(2.0 * Math.PI * thudFreq * t) * Math.Exp(-95.0 * decayMul * t) * 0.80;
-                // 塑料导向柱滑动漫反射
                 double friction = (rng.NextDouble() * 2.0 - 1.0) * Math.Exp(-140.0 * decayMul * t) * 0.20;
-
-                // 回车键钢丝平衡杆轻微共鸣
                 double wire = variant == 4 ? (Math.Sin(2.0 * Math.PI * 240.0 * t) * Math.Exp(-70.0 * t) * 0.25) : 0.0;
 
                 double wave = (dome + friction + wire) * gainMul;
@@ -456,10 +400,6 @@ namespace Journal.Services
             return BuildWavFile(samples);
         }
 
-        /// <summary>
-        /// 静修木鱼·檀木禅敲（Wood Block）声学物理建模：
-        /// 纯净温润实木空腔共鸣 (820Hz 基频 + 1640Hz 谐波)，声声安神
-        /// </summary>
         private static byte[] GenerateWoodBlock(int variant)
         {
             bool isSpecial = IsSpecialVariant(variant);
@@ -475,12 +415,8 @@ namespace Journal.Services
             {
                 double t = (double)i / SampleRate;
                 double decay = Math.Exp(-55.0 * decayMul * t);
-
-                // 实体檀木瞬态打击
                 double tone1 = Math.Sin(2.0 * Math.PI * baseFreq * t) * 0.75;
-                // 空腔二次谐波
                 double tone2 = Math.Sin(2.0 * Math.PI * (baseFreq * 2.0) * t) * 0.25;
-                // 微弱木质敲击接触噪声 (0~4ms)
                 double woodHit = (t < 0.005) ? (Math.Sin(2.0 * Math.PI * 3200.0 * pitchMul * t) * (1.0 - t / 0.005) * 0.30) : 0.0;
 
                 double wave = ((tone1 + tone2) * decay + woodHit) * gainMul;
@@ -491,30 +427,40 @@ namespace Journal.Services
         }
 
         /// <summary>
-        /// 对 16-bit PCM WAV 应用感知音量缩放（保持 WAV 44 字节头部完整）
+        /// 对 16-bit PCM WAV 应用感知音量缩放并写入目标 POH 固定缓冲区（长度一致时 100% 零重分配复用）
+        /// </summary>
+        public static void ApplyVolumeInto(byte[] wavBytes, double gain, ref byte[]? targetBuffer)
+        {
+            if (wavBytes == null || wavBytes.Length <= 44)
+            {
+                targetBuffer = Array.Empty<byte>();
+                return;
+            }
+
+            if (targetBuffer == null || targetBuffer.Length != wavBytes.Length)
+            {
+                // 分配于固定对象堆（POH），保证 WinMM PlaySound(SND_MEMORY | SND_ASYNC) 异步播放期间地址绝对固定
+                targetBuffer = GC.AllocateArray<byte>(wavBytes.Length, pinned: true);
+                Buffer.BlockCopy(wavBytes, 0, targetBuffer, 0, 44);
+            }
+
+            ReadOnlySpan<short> srcSamples = MemoryMarshal.Cast<byte, short>(wavBytes.AsSpan(44));
+            Span<short> dstSamples = MemoryMarshal.Cast<byte, short>(targetBuffer.AsSpan(44));
+
+            for (int i = 0; i < srcSamples.Length; i++)
+            {
+                dstSamples[i] = ClampToShort(srcSamples[i] * gain);
+            }
+        }
+
+        /// <summary>
+        /// 对 16-bit PCM WAV 应用感知音量缩放（返回新的固定缓冲区）
         /// </summary>
         public static byte[] ApplyVolume(byte[] wavBytes, double gain)
         {
-            if (wavBytes == null || wavBytes.Length <= 44) return wavBytes ?? Array.Empty<byte>();
-
-            // 分配于固定对象堆（POH），保证 WinMM PlaySound(SND_MEMORY | SND_ASYNC) 异步播放期间地址绝对固定不发生 GC 搬迁爆音
-            byte[] result = GC.AllocateArray<byte>(wavBytes.Length, pinned: true);
-            Buffer.BlockCopy(wavBytes, 0, result, 0, 44); // 复制 RIFF 头部
-
-            // 16-bit PCM 样本从第 44 字节开始
-            int sampleCount = (wavBytes.Length - 44) / 2;
-            for (int i = 0; i < sampleCount; i++)
-            {
-                int byteIndex = 44 + i * 2;
-                short sample = BitConverter.ToInt16(wavBytes, byteIndex);
-                double scaled = sample * gain;
-                short clamped = ClampToShort(scaled);
-
-                result[byteIndex] = (byte)(clamped & 0xFF);
-                result[byteIndex + 1] = (byte)((clamped >> 8) & 0xFF);
-            }
-
-            return result;
+            byte[]? result = null;
+            ApplyVolumeInto(wavBytes, gain, ref result);
+            return result ?? Array.Empty<byte>();
         }
 
         /// <summary>
@@ -553,7 +499,6 @@ namespace Journal.Services
                     }
                 }
 
-                // 确保手动保存音效目录与默认铜铃预设存在
                 string saveDir = Path.Combine(audioDir, "Save");
                 if (!Directory.Exists(saveDir))
                 {
@@ -572,7 +517,7 @@ namespace Journal.Services
         }
 
         /// <summary>
-        /// 构建标准的未压缩 16-bit 44.1kHz 单声道 RIFF WAV 字节流
+        /// 构建标准的未压缩 16-bit 44.1kHz 单声道 RIFF WAV 字节流（零 BinaryWriter 循环开销）
         /// </summary>
         private static byte[] BuildWavFile(short[] samples)
         {
@@ -580,34 +525,25 @@ namespace Journal.Services
             int chunkSize = 36 + subChunk2Size;
 
             byte[] wav = new byte[44 + subChunk2Size];
-            using var ms = new MemoryStream(wav);
-            using var bw = new BinaryWriter(ms);
+            Span<byte> header = wav.AsSpan(0, 44);
 
-            // RIFF header
-            bw.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
-            bw.Write(chunkSize);
-            bw.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
+            Encoding.ASCII.GetBytes("RIFF", header[0..4]);
+            BinaryPrimitives.WriteInt32LittleEndian(header[4..8], chunkSize);
+            Encoding.ASCII.GetBytes("WAVE", header[8..12]);
 
-            // fmt sub-chunk
-            bw.Write(System.Text.Encoding.ASCII.GetBytes("fmt "));
-            bw.Write(16); // Subchunk1Size for PCM
-            bw.Write(Channels); // AudioFormat = 1 (PCM)
-            bw.Write(Channels); // NumChannels = 1
-            bw.Write(SampleRate); // SampleRate = 44100
-            bw.Write(SampleRate * Channels * BitsPerSample / 8); // ByteRate = 88200
-            bw.Write((short)(Channels * BitsPerSample / 8)); // BlockAlign = 2
-            bw.Write(BitsPerSample); // BitsPerSample = 16
+            Encoding.ASCII.GetBytes("fmt ", header[12..16]);
+            BinaryPrimitives.WriteInt32LittleEndian(header[16..20], 16);
+            BinaryPrimitives.WriteInt16LittleEndian(header[20..22], Channels);
+            BinaryPrimitives.WriteInt16LittleEndian(header[22..24], Channels);
+            BinaryPrimitives.WriteInt32LittleEndian(header[24..28], SampleRate);
+            BinaryPrimitives.WriteInt32LittleEndian(header[28..32], SampleRate * Channels * BitsPerSample / 8);
+            BinaryPrimitives.WriteInt16LittleEndian(header[32..34], (short)(Channels * BitsPerSample / 8));
+            BinaryPrimitives.WriteInt16LittleEndian(header[34..36], BitsPerSample);
 
-            // data sub-chunk
-            bw.Write(System.Text.Encoding.ASCII.GetBytes("data"));
-            bw.Write(subChunk2Size);
+            Encoding.ASCII.GetBytes("data", header[36..40]);
+            BinaryPrimitives.WriteInt32LittleEndian(header[40..44], subChunk2Size);
 
-            // Raw PCM 16-bit samples
-            for (int i = 0; i < samples.Length; i++)
-            {
-                bw.Write(samples[i]);
-            }
-
+            Buffer.BlockCopy(samples, 0, wav, 44, subChunk2Size);
             return wav;
         }
 

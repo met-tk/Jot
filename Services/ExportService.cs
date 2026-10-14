@@ -11,7 +11,7 @@ using Journal.Models;
 namespace Journal.Services
 {
     /// <summary>
-    /// 导出格式枚举（已移除冗余 PDF / ZIP，支持 Markdown 批量、TXT 批量与 JSON 结构化导出）
+    /// 导出格式枚举（支持 Markdown 批量、TXT 批量与 JSON 结构化导出）
     /// </summary>
     public enum ExportFormat
     {
@@ -70,15 +70,11 @@ namespace Journal.Services
 
         /// <summary>
         /// 基于勾选的日记列表执行批量或单篇导出
-        /// - 当格式为 Markdown / Txt 且 destinationPath 为文件夹路径时：按日批量生成多个独立的 {yyyy-MM-dd}.md / {yyyy-MM-dd}.txt 文件；
-        /// - 当格式为 Markdown / Txt 且 destinationPath 为单文件路径时：生成纯净无冗余包装的可导入文本文件；
-        /// - 当格式为 Json 时：生成包含完整日记正文 Content 与元数据的标准 JSON 文件。
         /// </summary>
         public async Task<ExportResult> ExportEntriesAsync(
             IEnumerable<DiaryEntry> entries,
             ExportFormat format,
-            string destinationPath,
-            string rangeDescription = "")
+            string destinationPath)
         {
             try
             {
@@ -105,7 +101,7 @@ namespace Journal.Services
                         else
                         {
                             EnsureParentDirectoryExists(destinationPath);
-                            await ExportToMarkdownFileAsync(entryList, destinationPath);
+                            await ExportToCombinedFileAsync(entryList, destinationPath);
                         }
                         break;
 
@@ -117,7 +113,7 @@ namespace Journal.Services
                         else
                         {
                             EnsureParentDirectoryExists(destinationPath);
-                            await ExportToTxtFileAsync(entryList, destinationPath);
+                            await ExportToCombinedFileAsync(entryList, destinationPath);
                         }
                         break;
 
@@ -159,8 +155,6 @@ namespace Journal.Services
 
         /// <summary>
         /// 按日批量导出多个独立的 {yyyy-MM-dd}.md 或 {yyyy-MM-dd}.txt 文件至指定文件夹。
-        /// 每个文件内容保持 100% 纯净原始日记正文（保留内部 [HH:mm:ss] 时间戳，无冗余包装），
-        /// 可直接通过导入模块的“选择文件夹”或“选择文件”100% 零污染无损导入还原。
         /// </summary>
         public async Task<string> ExportToDirectoryAsync(
             IEnumerable<DiaryEntry> entries,
@@ -188,44 +182,22 @@ namespace Journal.Services
         }
 
         /// <summary>
-        /// 导出为单一纯净 Markdown 文件（兼容 ImportService 的 # yyyy-MM-dd 标题切分规则）
+        /// 导出为单一纯净合并文本文件（兼容 ImportService 的 # yyyy-MM-dd 标题切分规则）
         /// </summary>
-        public async Task<string> ExportToMarkdownFileAsync(
-            IEnumerable<DiaryEntry> entries,
-            string destinationFilePath,
-            string title = "",
-            string rangeDescription = "")
-        {
-            string markdownContent = await BuildCombinedMarkdownContentAsync(entries, title, rangeDescription);
-            EnsureParentDirectoryExists(destinationFilePath);
-            await File.WriteAllTextAsync(destinationFilePath, markdownContent, Encoding.UTF8);
-            return destinationFilePath;
-        }
-
-        /// <summary>
-        /// 导出为单一纯净 TXT 文件（兼容 ImportService 的 # yyyy-MM-dd 标题切分规则）
-        /// </summary>
-        public async Task<string> ExportToTxtFileAsync(
+        public async Task<string> ExportToCombinedFileAsync(
             IEnumerable<DiaryEntry> entries,
             string destinationFilePath)
         {
-            string txtContent = await BuildCombinedMarkdownContentAsync(entries);
+            string combinedContent = await BuildCombinedMarkdownContentAsync(entries);
             EnsureParentDirectoryExists(destinationFilePath);
-            await File.WriteAllTextAsync(destinationFilePath, txtContent, Encoding.UTF8);
+            await File.WriteAllTextAsync(destinationFilePath, combinedContent, Encoding.UTF8);
             return destinationFilePath;
         }
 
         /// <summary>
-        /// 构建纯净、无冗余元数据的合并文本：
-        /// - 若仅 1 篇日记：直接输出 `# yyyy-MM-dd\n{正文}`；
-        /// - 若多篇日记：每篇以独占一行的 `# yyyy-MM-dd` 作为标准日期锚点，后跟纯净原始正文，
-        ///   绝不插入 HTML 锚点、封面表格、目录索引或引用块，确保 ImportService 100% 识别。
+        /// 构建纯净、无冗余元数据的合并文本（以 # yyyy-MM-dd 作为标准日期锚点）
         /// </summary>
-        public async Task<string> BuildCombinedMarkdownContentAsync(
-            IEnumerable<DiaryEntry> entries,
-            string title = "",
-            string rangeDescription = "",
-            bool includeToc = false)
+        public async Task<string> BuildCombinedMarkdownContentAsync(IEnumerable<DiaryEntry> entries)
         {
             var entriesList = entries.OrderBy(e => e.Date).ToList();
             var sb = new StringBuilder();
@@ -255,8 +227,7 @@ namespace Journal.Services
         #region JSON 结构化无损导出
 
         /// <summary>
-        /// 导出为包含完整正文 Content 与标准 yyyy-MM-dd 日期的结构化 JSON 文件，
-        /// 中文字符不转义，且与 ImportService.ParseJsonStreamAsync 100% 往返无损兼容。
+        /// 导出为包含完整正文 Content 与标准 yyyy-MM-dd 日期的结构化 JSON 文件
         /// </summary>
         public async Task<string> ExportToJsonFileAsync(IEnumerable<DiaryEntry> entries, string destinationJsonPath)
         {
@@ -303,13 +274,13 @@ namespace Journal.Services
             return destinationJsonPath;
         }
 
-        private async Task<string> LoadEntryContentAsync(DiaryEntry entry)
+        private static async Task<string> LoadEntryContentAsync(DiaryEntry entry)
         {
             try
             {
                 if (!string.IsNullOrWhiteSpace(entry.FullPath) && File.Exists(entry.FullPath))
                 {
-                    return await File.ReadAllTextAsync(entry.FullPath, Encoding.UTF8);
+                    return await DiaryStorageService.ReadFileTextSharedAsync(entry.FullPath);
                 }
                 return await DiaryStorageService.Instance.LoadDiaryContentAsync(entry.Date);
             }

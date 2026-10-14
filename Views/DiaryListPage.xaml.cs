@@ -75,21 +75,10 @@ namespace Journal.Views
             AuxiliaryPanel.Visibility = isCompact ? Visibility.Collapsed : Visibility.Visible;
         }
 
-        protected override async void OnNavigatedTo(NavigationEventArgs e)
+        protected override void OnNavigatedTo(NavigationEventArgs e)
         {
             base.OnNavigatedTo(e);
-            try
-            {
-                if (this.IsLoaded)
-                {
-                    await ViewModel.LoadDataAsync();
-                    RefreshAuxiliaryCalendar();
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[DiaryListPage] OnNavigatedTo error: {ex.Message}");
-            }
+            // 数据刷新统一在 Loaded 事件中执行（NavigationCacheMode.Required 下每次切回也会触发 Loaded），避免重复查询
         }
 
         #region 静态绑定辅助转换器
@@ -120,7 +109,22 @@ namespace Journal.Views
                 {
                     await ViewModel.OpenReadingDayAsync(card);
                     SyncAuxiliaryCalendarToDate(card.Date);
+                    ApplyReadingSearchHighlight();
                 }
+            }
+        }
+
+        private void ApplyReadingSearchHighlight()
+        {
+            if (!this.IsLoaded) return;
+            string? kw = ViewModel.SearchKeyword?.Trim();
+            if (ReadingDiaryTitleText != null)
+            {
+                AnalyticsPage.ApplyTextHighlight(ReadingDiaryTitleText, ViewModel.ReadingDiaryTitle, kw);
+            }
+            if (ReadingDiaryContentText != null)
+            {
+                AnalyticsPage.ApplyTextHighlight(ReadingDiaryContentText, ViewModel.ReadingDiaryContent, kw);
             }
         }
 
@@ -128,6 +132,15 @@ namespace Journal.Views
         {
             if (ViewModel.ReadingCard != null)
             {
+                ShellPage.Current?.NavigateToEditor(ViewModel.ReadingCard.Date);
+            }
+        }
+
+        private void ReadingEdit_AcceleratorInvoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+        {
+            if (ViewModel.IsReadingDay && ViewModel.ReadingCard != null)
+            {
+                args.Handled = true;
                 ShellPage.Current?.NavigateToEditor(ViewModel.ReadingCard.Date);
             }
         }
@@ -614,6 +627,15 @@ namespace Journal.Views
                     if (card != null)
                     {
                         _cardElementMap[card.Id] = elem;
+                        string? kw = card.HighlightKeyword ?? ViewModel.SearchKeyword?.Trim();
+                        if (elem.FindName("CardTitleText") is TextBlock titleTb)
+                        {
+                            AnalyticsPage.ApplyTextHighlight(titleTb, card.Title, kw);
+                        }
+                        if (elem.FindName("CardExcerptText") is TextBlock excerptTb)
+                        {
+                            AnalyticsPage.ApplyTextHighlight(excerptTb, card.Excerpt, kw);
+                        }
                     }
                 }
             }
@@ -674,6 +696,7 @@ namespace Journal.Views
                 if (card != null)
                 {
                     await ViewModel.OpenReadingDayAsync(card);
+                    ApplyReadingSearchHighlight();
                 }
             }
             else

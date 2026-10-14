@@ -417,20 +417,15 @@ namespace Journal.Views
             }
         }
 
-        protected override async void OnNavigatedTo(NavigationEventArgs e)
+        protected override void OnNavigatedTo(NavigationEventArgs e)
         {
             base.OnNavigatedTo(e);
             try
             {
+                // 数据加载与日历同步统一由 OnPageLoaded 执行，避免首次导航时 OnNavigatedTo 与 Loaded 并发触发两次数据库查询与 UI 构建
                 SyncThemeFlag();
-                await ViewModel.LoadCalendarAsync();
                 ApplyZoomLayout();
                 UpdateResponsiveLayout();
-                if (ViewModel.IsDayView)
-                {
-                    RefreshDayAuxiliaryCalendar();
-                    SyncAuxiliaryCalendarToDate(ViewModel.SelectedDate);
-                }
             }
             catch (Exception ex)
             {
@@ -538,6 +533,7 @@ namespace Journal.Views
                 }
                 else if (next.Mode == CalendarViewMode.MonthDetail)
                 {
+                    ViewModel.CurrentYear = next.Year;
                     await ViewModel.DrillDownToMonthAsync(next.Month);
                     return true;
                 }
@@ -547,4 +543,3 @@ namespace Journal.Views
         }
     }
 }
-

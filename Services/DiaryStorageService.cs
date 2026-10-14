@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -37,12 +38,22 @@ namespace Journal.Services
         public string BackupDirectory => Path.Combine(Path.GetDirectoryName(_baseDirectory) ?? _baseDirectory, "Backups");
         public string TrashDirectory => Path.Combine(Path.GetDirectoryName(_baseDirectory) ?? _baseDirectory, "Trash");
 
-        private void EnsureDirectoryExists(string path)
+        private static void EnsureDirectoryExists(string path)
         {
             if (!Directory.Exists(path))
             {
                 Directory.CreateDirectory(path);
             }
+        }
+
+        /// <summary>
+        /// 并发安全读取 UTF-8 文本文件（允许后台同时进行写入与原子重命名替换）
+        /// </summary>
+        public static async Task<string> ReadFileTextSharedAsync(string path)
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            return await reader.ReadToEndAsync();
         }
 
         public string GetDiaryPath(DateTime date)
@@ -96,9 +107,7 @@ namespace Journal.Services
             string standardPath = GetDiaryPath(date);
             if (File.Exists(standardPath))
             {
-                using var stream = new FileStream(standardPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                using var reader = new StreamReader(stream, Encoding.UTF8);
-                return await reader.ReadToEndAsync();
+                return await ReadFileTextSharedAsync(standardPath);
             }
 
             // 2. 容灾回退 1：查询 SQLite 索引中登记的 FullPath
@@ -107,22 +116,11 @@ namespace Journal.Services
                 var entry = await DiaryIndexService.Instance.GetEntryAsync(date);
                 if (entry != null && !string.IsNullOrWhiteSpace(entry.FullPath) && File.Exists(entry.FullPath))
                 {
-                    using var stream = new FileStream(entry.FullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                    using var reader = new StreamReader(stream, Encoding.UTF8);
-                    string text = await reader.ReadToEndAsync();
-                    // 异步迁移至标准路径
-                    _ = Task.Run(async () =>
+                    string text = await ReadFileTextSharedAsync(entry.FullPath);
+                    if (!string.Equals(Path.GetFullPath(entry.FullPath), Path.GetFullPath(standardPath), StringComparison.OrdinalIgnoreCase))
                     {
-                        try
-                        {
-                            await SaveDiaryContentAsync(date, text);
-                            await DiaryIndexService.Instance.SyncDiaryAsync(date, text, standardPath);
-                        }
-                        catch (Exception ex)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"Failed to migrate diary from FullPath: {ex.Message}");
-                        }
-                    });
+                        _ = MigrateToStandardPathAsync(date, text, standardPath);
+                    }
                     return text;
                 }
             }
@@ -140,22 +138,12 @@ namespace Journal.Services
                     var candidateFiles = Directory.GetFiles(_baseDirectory, targetFileName, SearchOption.AllDirectories);
                     if (candidateFiles.Length > 0 && File.Exists(candidateFiles[0]))
                     {
-                        using var stream = new FileStream(candidateFiles[0], FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                        using var reader = new StreamReader(stream, Encoding.UTF8);
-                        string text = await reader.ReadToEndAsync();
-                        // 异步迁移至标准路径
-                        _ = Task.Run(async () =>
+                        string foundPath = candidateFiles[0];
+                        string text = await ReadFileTextSharedAsync(foundPath);
+                        if (!string.Equals(Path.GetFullPath(foundPath), Path.GetFullPath(standardPath), StringComparison.OrdinalIgnoreCase))
                         {
-                            try
-                            {
-                                await SaveDiaryContentAsync(date, text);
-                                await DiaryIndexService.Instance.SyncDiaryAsync(date, text, standardPath);
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"Failed to migrate recursively found diary: {ex.Message}");
-                            }
-                        });
+                            _ = MigrateToStandardPathAsync(date, text, standardPath);
+                        }
                         return text;
                     }
                 }
@@ -168,9 +156,22 @@ namespace Journal.Services
             return string.Empty;
         }
 
+        private async Task MigrateToStandardPathAsync(DateTime date, string text, string standardPath)
+        {
+            try
+            {
+                await SaveDiaryContentAsync(date, text);
+                await DiaryIndexService.Instance.SyncDiaryAsync(date, text, standardPath);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to migrate diary to standard path: {ex.Message}");
+            }
+        }
+
         public Task<string> ReadDiaryAsync(DateTime date) => LoadDiaryContentAsync(date);
 
-        private static readonly ConcurrentDictionary<string, SemaphoreSlim> _fileLocks = new();
+        private static readonly ConcurrentDictionary<string, SemaphoreSlim> _fileLocks = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Regex s_existingTimestampDateRegex = new(@"\[\s*\d{1,4}[-:/]\d{1,2}[^\]]*\]", RegexOptions.Compiled);
         private static readonly Regex s_existingTimestampTimeRegex = new(@"\[\s*\d{1,2}:\d{2}(:\d{2})?\s*\]", RegexOptions.Compiled);
         private static readonly Regex s_timestampCountRegex = new(@"\[\s*(\d{4}-\d{2}-\d{2}\s+)?\d{1,2}:\d{2}(:\d{2})?\s*\]", RegexOptions.Compiled);
@@ -188,26 +189,26 @@ namespace Journal.Services
             var sem = _fileLocks.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
             await sem.WaitAsync();
 
-            // 消费级数据安全防线：若已有历史文件，在覆写前创建带时间戳的恢复快照
-            if (File.Exists(path))
-            {
-                try
-                {
-                    string existingText = await File.ReadAllTextAsync(path, Encoding.UTF8);
-                    if (!string.Equals(existingText, content, StringComparison.Ordinal))
-                    {
-                        CreateBackupSnapshot(date, existingText);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[DiaryStorageService] Snapshot backup failed: {ex.Message}");
-                }
-            }
-
             string tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
             try
             {
+                // 消费级数据安全防线：若已有历史文件，在覆写前创建带时间戳的恢复快照
+                if (File.Exists(path))
+                {
+                    try
+                    {
+                        string existingText = await ReadFileTextSharedAsync(path);
+                        if (!string.Equals(existingText, content, StringComparison.Ordinal))
+                        {
+                            CreateBackupSnapshot(date, existingText);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[DiaryStorageService] Snapshot backup failed: {ex.Message}");
+                    }
+                }
+
                 await File.WriteAllTextAsync(tempPath, content ?? string.Empty, Encoding.UTF8);
                 File.Move(tempPath, path, overwrite: true);
             }
@@ -237,7 +238,7 @@ namespace Journal.Services
                 string backupPath = Path.Combine(BackupDirectory, backupFileName);
                 File.WriteAllText(backupPath, content ?? string.Empty, Encoding.UTF8);
 
-                PruneBackups();
+                _ = Task.Run(() => PruneBackups());
             }
             catch (Exception ex)
             {
@@ -250,16 +251,14 @@ namespace Journal.Services
             try
             {
                 if (!Directory.Exists(BackupDirectory)) return;
-                var backupFiles = new DirectoryInfo(BackupDirectory).GetFiles("*.bak.md")
-                    .OrderBy(f => f.CreationTimeUtc)
-                    .ToList();
-                if (backupFiles.Count > maxBackups)
+                var backupFiles = new DirectoryInfo(BackupDirectory).GetFiles("*.bak.md");
+                if (backupFiles.Length <= maxBackups) return;
+
+                Array.Sort(backupFiles, (a, b) => a.LastWriteTimeUtc.CompareTo(b.LastWriteTimeUtc));
+                int toDelete = backupFiles.Length - maxBackups;
+                for (int i = 0; i < toDelete; i++)
                 {
-                    int toDelete = backupFiles.Count - maxBackups;
-                    for (int i = 0; i < toDelete; i++)
-                    {
-                        try { backupFiles[i].Delete(); } catch { }
-                    }
+                    try { backupFiles[i].Delete(); } catch { }
                 }
             }
             catch { }
@@ -279,42 +278,43 @@ namespace Journal.Services
         /// </summary>
         public bool HasExistingTimestamp(string content)
         {
-            if (string.IsNullOrWhiteSpace(content)) return false;
+            if (string.IsNullOrWhiteSpace(content) || !content.Contains('[')) return false;
             return s_existingTimestampDateRegex.IsMatch(content) || s_existingTimestampTimeRegex.IsMatch(content);
         }
 
         /// <summary>
-        /// 统计日记中的时间戳节点数量
+        /// 统计日记中的时间戳节点数量（基于 .NET 8 Regex.Count 零分配实现）
         /// </summary>
         public int CountTimestamps(string content)
         {
-            if (string.IsNullOrWhiteSpace(content)) return 0;
-            return s_timestampCountRegex.Matches(content).Count;
+            if (string.IsNullOrWhiteSpace(content) || !content.Contains('[')) return 0;
+            return s_timestampCountRegex.Count(content);
         }
 
         /// <summary>
-        /// 精确统计汉字字数与英文词数
+        /// 精确统计汉字字数与英文词数（零 Match 对象分配）
         /// </summary>
         public int CalculateWordCount(string content)
         {
             if (string.IsNullOrWhiteSpace(content)) return 0;
 
-            // 移除时间戳标记
-            string cleaned = s_bracketTagRegex.Replace(content, " ");
+            // 仅当包含方括号时才执行正则替换
+            string cleaned = content.Contains('[') ? s_bracketTagRegex.Replace(content, " ") : content;
 
             int count = 0;
-            // 统计汉字、日韩文字字符
+            // 统计汉字（含扩展 A 区）、日韩假名字符
             foreach (char c in cleaned)
             {
-                if (c >= 0x4E00 && c <= 0x9FA5 || // CJK 统一表意符号
-                    c >= 0x3040 && c <= 0x30FF)   // 平假名/片假名
+                if ((c >= 0x4E00 && c <= 0x9FFF) ||
+                    (c >= 0x3400 && c <= 0x4DBF) ||
+                    (c >= 0x3040 && c <= 0x30FF))
                 {
                     count++;
                 }
             }
 
-            // 统计连续英文/数字单词数
-            count += s_englishWordRegex.Matches(cleaned).Count;
+            // 统计连续英文/数字单词数（Regex.Count 零分配）
+            count += s_englishWordRegex.Count(cleaned);
 
             return count;
         }
@@ -326,15 +326,14 @@ namespace Journal.Services
         {
             if (string.IsNullOrWhiteSpace(content)) return string.Empty;
 
-            // 移除时间戳并压缩空白符
-            string cleaned = s_bracketTagRegex.Replace(content, " ");
+            string cleaned = content.Contains('[') ? s_bracketTagRegex.Replace(content, " ") : content;
             cleaned = s_whitespaceRegex.Replace(cleaned, " ").Trim();
 
             return TruncateWithEllipsis(cleaned, maxLength);
         }
 
         /// <summary>
-        /// 智能提炼日记标题与非重叠后续摘录 (F5 / R3)
+        /// 智能提炼日记标题与非重叠后续摘录
         /// </summary>
         public DiarySummary ExtractSummary(string content, int maxExcerptLength = 120)
         {
@@ -344,16 +343,22 @@ namespace Journal.Services
             }
 
             // 1. 移除时间戳标记
-            string cleaned = s_bracketTagRegex.Replace(content, " ").Trim();
+            string cleaned = (content.Contains('[') ? s_bracketTagRegex.Replace(content, " ") : content).Trim();
             if (string.IsNullOrWhiteSpace(cleaned))
             {
                 return new DiarySummary(null, string.Empty, string.Empty, false);
             }
 
-            var lines = cleaned.Split(s_lineSplitters, StringSplitOptions.RemoveEmptyEntries)
-                               .Select(l => l.Trim())
-                               .Where(l => !string.IsNullOrWhiteSpace(l))
-                               .ToList();
+            var rawLines = cleaned.Split(s_lineSplitters, StringSplitOptions.RemoveEmptyEntries);
+            var lines = new List<string>(rawLines.Length);
+            foreach (var rawLine in rawLines)
+            {
+                string trimmed = rawLine.Trim();
+                if (trimmed.Length > 0)
+                {
+                    lines.Add(trimmed);
+                }
+            }
 
             if (lines.Count == 0)
             {
@@ -369,7 +374,7 @@ namespace Journal.Services
             if (headingMatch.Success)
             {
                 customTitle = headingMatch.Groups[1].Value.Trim();
-                bodyText = string.Join("\n", lines.Skip(1)).Trim();
+                bodyText = lines.Count > 1 ? string.Join("\n", lines.Skip(1)).Trim() : string.Empty;
             }
             else
             {
@@ -377,11 +382,11 @@ namespace Journal.Services
                 if (themeMatch.Success)
                 {
                     customTitle = themeMatch.Groups[1].Value.Trim();
-                    bodyText = string.Join("\n", lines.Skip(1)).Trim();
+                    bodyText = lines.Count > 1 ? string.Join("\n", lines.Skip(1)).Trim() : string.Empty;
                 }
                 else
                 {
-                    bodyText = string.Join("\n", lines).Trim();
+                    bodyText = string.Join("\n", lines);
                 }
             }
 
@@ -391,7 +396,6 @@ namespace Journal.Services
 
             if (!string.IsNullOrWhiteSpace(bodyText))
             {
-                // 匹配终止标点：中文（。！？）及英文（.!?）或换行
                 var sentenceMatch = s_firstSentenceRegex.Match(bodyText);
                 if (sentenceMatch.Success && !string.IsNullOrWhiteSpace(sentenceMatch.Value))
                 {
@@ -401,7 +405,7 @@ namespace Journal.Services
                         firstSentence = TruncateWithEllipsis(firstSentence, 45);
                     }
 
-                    // 当没有自拟标题时，摘录必须从第二句开始，彻底杜绝大标题与摘要文本重复！
+                    // 当没有自拟标题时，摘录必须从第二句开始，彻底杜绝大标题与摘要文本重复
                     if (string.IsNullOrWhiteSpace(customTitle))
                     {
                         int matchEndIndex = sentenceMatch.Index + sentenceMatch.Length;
@@ -444,12 +448,12 @@ namespace Journal.Services
             {
                 cutLen--;
             }
-            return text.Substring(0, cutLen) + "...";
+            return string.Concat(text.AsSpan(0, cutLen), "...");
         }
     }
 
     /// <summary>
-    /// 日记摘要与核心首句提炼结果 (PROJECT.md Interface Contract)
+    /// 日记摘要与核心首句提炼结果
     /// </summary>
     public record DiarySummary(string? CustomTitle, string FirstSentence, string RemainingExcerpt, bool HasExcerpt)
     {

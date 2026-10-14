@@ -10,6 +10,10 @@
     xmlns:local="using:Journal.Views"
     mc:Ignorable="d">
 
+    <Page.KeyboardAccelerators>
+        <KeyboardAccelerator Key="E" Modifiers="Control" Invoked="ReadingEdit_AcceleratorInvoked"/>
+    </Page.KeyboardAccelerators>
+
     <Grid Background="Transparent">
         <!-- 1. 视图层级 1：数据统计大盘与核心意象词云 (Overview) -->
         <ScrollViewer VerticalScrollBarVisibility="Auto"
@@ -355,7 +359,7 @@
 
                                         <TextBlock Text="{x:Bind MonthLabel}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
 
-                                        <ProgressBar Grid.Column="1" Value="{x:Bind WordCount}" Maximum="3000"
+                                        <ProgressBar Grid.Column="1" Value="{x:Bind WordCount}" Maximum="{x:Bind MaxWordCount}"
                                                      Height="5" CornerRadius="2.5" VerticalAlignment="Center"
                                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
 

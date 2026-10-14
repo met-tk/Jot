@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -94,7 +95,7 @@ namespace Journal.ViewModels
             '跟', '向', '正', '已', '再', '总', '更', '其', '与', '及', '此', '各'
         };
 
-        private static readonly HashSet<string> s_presetLexicon = new(StringComparer.OrdinalIgnoreCase)
+        private static readonly string[] s_presetLexicon =
         {
             "代码", "项目", "设计", "开发", "架构", "重构", "学习", "阅读", "读书", "思考",
             "灵感", "创作", "散步", "跑步", "运动", "健身", "散心", "晨跑", "夜跑", "公园",
@@ -118,8 +119,11 @@ namespace Journal.ViewModels
             Color.FromArgb(245, 99, 102, 241)   // 靛青
         };
 
+        private static SolidColorBrush?[]? s_cachedPaletteBrushes;
+
         private readonly DiaryIndexService _index = DiaryIndexService.Instance;
         private readonly DiaryStorageService _storage = DiaryStorageService.Instance;
+        private Dictionary<DateTime, string> _cachedContentMap = new();
 
         [ObservableProperty]
         private AnalyticsViewMode _viewMode = AnalyticsViewMode.Overview;
@@ -174,7 +178,7 @@ namespace Journal.ViewModels
 
         #endregion
 
-        #region 只读日记预览状态 (沿用目录双栏)
+        #region 只读日记预览状态
 
         [ObservableProperty]
         private DiaryCardItem? _readingCard;
@@ -199,11 +203,7 @@ namespace Journal.ViewModels
 
         #endregion
 
-        public AnalyticsViewModel()
-        {
-        }
-
-        private readonly System.Threading.SemaphoreSlim _loadSemaphore = new(1, 1);
+        private readonly SemaphoreSlim _loadSemaphore = new(1, 1);
 
         public void Subscribe()
         {
@@ -233,8 +233,9 @@ namespace Journal.ViewModels
             await _loadSemaphore.WaitAsync();
             try
             {
-                Stats = await _index.CalculateAnalyticsAsync();
                 var rawEntries = await _index.GetAllEntriesAsync();
+                Stats = await _index.CalculateAnalyticsAsync(rawEntries);
+
                 var validEntries = rawEntries
                     .Where(e => e.WordCount > 0 && !string.IsNullOrWhiteSpace(e.Title) && e.Title != "（今日静默，暂无文字）")
                     .ToList();
@@ -249,6 +250,7 @@ namespace Journal.ViewModels
 
                 if (!HasData)
                 {
+                    _cachedContentMap.Clear();
                     WordCloudWords = new ObservableCollection<WordCloudItem>();
                     HourlyStats = new ObservableCollection<HourlyHeatItem>();
                     LengthTiers = new ObservableCollection<LengthTierItem>();
@@ -260,7 +262,7 @@ namespace Journal.ViewModels
                 // 1. 计算篇幅梯队分布（单次遍历）
                 CalculateLengthTiers(validEntries);
 
-                // 2. 并行一次性加载所有有效日记正文，供 24 小时生物钟与词云图谱共享复用（消除重复磁盘 I/O）
+                // 2. 并行一次性加载所有有效日记正文，并在后台线程完成时段与词云聚合计算
                 if (WordCloudWords.Count == 0)
                 {
                     IsWordCloudLoading = true;
@@ -269,12 +271,17 @@ namespace Journal.ViewModels
                 try
                 {
                     var contentMap = await LoadDiaryContentsMapAsync(validEntries);
+                    _cachedContentMap = contentMap;
 
-                    // 3. 计算 24 小时生物钟热度
-                    CalculateHourlyCircadian(validEntries, contentMap);
+                    var (hourCounts, topWords) = await Task.Run(() =>
+                    {
+                        var hours = ComputeHourlyCounts(validEntries, contentMap);
+                        var words = ComputeTopWordCloudStats(validEntries, contentMap);
+                        return (hours, words);
+                    });
 
-                    // 4. 计算核心意象与词云图谱
-                    CalculateWordCloud(validEntries, contentMap);
+                    ApplyHourlyCircadian(hourCounts);
+                    ApplyWordCloudItems(topWords);
                 }
                 finally
                 {
@@ -330,7 +337,7 @@ namespace Journal.ViewModels
                 else epic++;
             }
 
-            var tiers = new List<LengthTierItem>
+            var tiers = new List<LengthTierItem>(5)
             {
                 new() { TierName = "短篇", RangeLabel = "< 100 字", Count = micro, Percentage = (double)micro / total * 100 },
                 new() { TierName = "中短篇", RangeLabel = "100 - 300 字", Count = brief, Percentage = (double)brief / total * 100 },
@@ -348,17 +355,16 @@ namespace Journal.ViewModels
             }
         }
 
-        private void CalculateHourlyCircadian(List<DiaryEntry> entries, Dictionary<DateTime, string> contentMap)
+        private static int[] ComputeHourlyCounts(List<DiaryEntry> entries, Dictionary<DateTime, string> contentMap)
         {
             int[] hourCounts = new int[24];
-
-            // 采样分析最近或全部日记
             int sampleLimit = Math.Min(120, entries.Count);
+
             for (int i = 0; i < sampleLimit; i++)
             {
                 var entry = entries[i];
                 bool foundTimestamp = false;
-                if (contentMap.TryGetValue(entry.Date.Date, out string? content) && !string.IsNullOrEmpty(content))
+                if (contentMap.TryGetValue(entry.Date.Date, out string? content) && !string.IsNullOrEmpty(content) && content.Contains('['))
                 {
                     var matches = s_hourlyTimestampRegex.Matches(content);
                     foreach (Match m in matches)
@@ -373,18 +379,31 @@ namespace Journal.ViewModels
 
                 if (!foundTimestamp)
                 {
-                    // 若无内嵌时间戳，按记录日期默认赋予黄金晚间时段 (22:00)
                     hourCounts[22]++;
                 }
             }
 
+            return hourCounts;
+        }
+
+        private void ApplyHourlyCircadian(int[] hourCounts)
+        {
             int maxCount = hourCounts.Max();
             if (maxCount == 0) maxCount = 1;
 
             var newHourly = new ObservableCollection<HourlyHeatItem>();
+            int peakHour = 0;
+            int peakCount = -1;
+
             for (int h = 0; h < 24; h++)
             {
                 int c = hourCounts[h];
+                if (c > peakCount)
+                {
+                    peakCount = c;
+                    peakHour = h;
+                }
+
                 double pct = (double)c / maxCount * 100;
                 double height = Math.Max(4.0, (double)c / maxCount * 80.0);
 
@@ -398,17 +417,6 @@ namespace Journal.ViewModels
                 });
             }
             HourlyStats = newHourly;
-
-            int peakHour = 0;
-            int peakCount = -1;
-            for (int h = 0; h < 24; h++)
-            {
-                if (hourCounts[h] > peakCount)
-                {
-                    peakCount = hourCounts[h];
-                    peakHour = h;
-                }
-            }
 
             string periodTag = peakHour switch
             {
@@ -424,108 +432,137 @@ namespace Journal.ViewModels
             PeakHourDescription = $"记录集中时段：{periodTag} ({peakHour:D2}:00 - {peakHour:D2}:59)";
         }
 
-        private void CalculateWordCloud(List<DiaryEntry> entries, Dictionary<DateTime, string> contentMap)
+        /// <summary>
+        /// 单篇级候选词局部归并与精确频次统计（时间复杂度从 O(U * N * L) 降至 O(N * L)，提速数百倍）
+        /// </summary>
+        private static List<(string Word, int TotalCount, int DiaryCount)> ComputeTopWordCloudStats(
+            List<DiaryEntry> entries,
+            Dictionary<DateTime, string> contentMap)
         {
             if (entries.Count == 0)
             {
-                WordCloudWords = new ObservableCollection<WordCloudItem>();
-                return;
+                return new List<(string, int, int)>();
             }
 
-            var diaryContents = new List<string>(entries.Count);
+            var globalStats = new Dictionary<string, (int TotalCount, int DiaryCount)>(StringComparer.OrdinalIgnoreCase);
+            var perDiaryCandidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var entry in entries)
             {
-                if (contentMap.TryGetValue(entry.Date.Date, out string? text) && !string.IsNullOrWhiteSpace(text))
+                if (!contentMap.TryGetValue(entry.Date.Date, out string? content) || string.IsNullOrWhiteSpace(content))
                 {
-                    diaryContents.Add(text);
+                    content = $"{entry.Title}\n{entry.Excerpt}";
                 }
-                else
+                if (string.IsNullOrWhiteSpace(content)) continue;
+
+                perDiaryCandidates.Clear();
+
+                // 1. 仅将当前日记中实际出现的预设词纳入本篇候选
+                foreach (var lex in s_presetLexicon)
                 {
-                    diaryContents.Add($"{entry.Title}\n{entry.Excerpt}");
+                    if (!s_stopWords.Contains(lex) && content.Contains(lex, StringComparison.OrdinalIgnoreCase))
+                    {
+                        perDiaryCandidates.Add(lex);
+                    }
                 }
-            }
 
-            // 从清洗后的全量日记子句中提取候选词（自然词典优先 + 严密 n-gram）
-            var candidateWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var lex in s_presetLexicon)
-            {
-                if (!s_stopWords.Contains(lex)) candidateWords.Add(lex);
-            }
-
-            foreach (var text in diaryContents)
-            {
-                string clean = s_cleanTimestampRegex.Replace(text, " ");
-                clean = s_cleanUrlRegex.Replace(clean, " ");
+                string clean = content.Contains('[') ? s_cleanTimestampRegex.Replace(content, " ") : content;
+                if (clean.Contains("http", StringComparison.OrdinalIgnoreCase))
+                {
+                    clean = s_cleanUrlRegex.Replace(clean, " ");
+                }
                 clean = s_cleanMarkdownSymbolsRegex.Replace(clean, " ");
 
-                // 提取英文单词 (3~12位)
+                // 2. 提取当前日记中的英文单词 (3~12位)
                 var engMatches = s_englishWordRegex.Matches(clean);
                 foreach (Match m in engMatches)
                 {
                     string w = m.Value.ToLowerInvariant();
-                    if (!s_stopWords.Contains(w)) candidateWords.Add(w);
+                    if (!s_stopWords.Contains(w))
+                    {
+                        perDiaryCandidates.Add(w);
+                    }
                 }
 
-                // 拆分子句提取中文词
+                // 3. 拆分子句提取当前日记中的中文 2~4 字词
                 var sentences = s_cjkSplitRegex.Split(clean);
                 foreach (var sent in sentences)
                 {
                     if (sent.Length < 2) continue;
-                    for (int len = 2; len <= Math.Min(4, sent.Length); len++)
+                    int maxLen = Math.Min(4, sent.Length);
+                    for (int len = 2; len <= maxLen; len++)
                     {
-                        for (int i = 0; i <= sent.Length - len; i++)
+                        int limit = sent.Length - len;
+                        for (int i = 0; i <= limit; i++)
                         {
-                            string sub = sent.Substring(i, len);
-                            if (s_singleStopChars.Contains(sub[0]) || s_singleStopChars.Contains(sub[^1]))
+                            if (s_singleStopChars.Contains(sent[i]) || s_singleStopChars.Contains(sent[i + len - 1]))
                             {
                                 continue;
                             }
-                            if (s_stopWords.Contains(sub)) continue;
-                            candidateWords.Add(sub);
+                            string sub = sent.Substring(i, len);
+                            if (!s_stopWords.Contains(sub))
+                            {
+                                perDiaryCandidates.Add(sub);
+                            }
+                        }
+                    }
+                }
+
+                // 4. 仅在当前单篇日记内对本篇提取出的候选词执行非重叠精确计数
+                foreach (var word in perDiaryCandidates)
+                {
+                    int countInDiary = 0;
+                    int idx = 0;
+                    while ((idx = content.IndexOf(word, idx, StringComparison.OrdinalIgnoreCase)) != -1)
+                    {
+                        countInDiary++;
+                        idx += word.Length;
+                    }
+
+                    if (countInDiary > 0)
+                    {
+                        if (globalStats.TryGetValue(word, out var prev))
+                        {
+                            globalStats[word] = (prev.TotalCount + countInDiary, prev.DiaryCount + 1);
+                        }
+                        else
+                        {
+                            globalStats[word] = (countInDiary, 1);
                         }
                     }
                 }
             }
 
-            // 对候选词进行数学精确的全文本计次与日记篇数统筹（零重复、真实计数）
-            var wordStats = new List<(string Word, int TotalCount, int DiaryCount)>();
-
-            foreach (var word in candidateWords)
-            {
-                int totalOccurrences = 0;
-                int diaryOccurrences = 0;
-
-                foreach (var content in diaryContents)
-                {
-                    int countInThisDiary = 0;
-                    int idx = 0;
-                    while ((idx = content.IndexOf(word, idx, StringComparison.OrdinalIgnoreCase)) != -1)
-                    {
-                        countInThisDiary++;
-                        idx += word.Length;
-                    }
-
-                    if (countInThisDiary > 0)
-                    {
-                        totalOccurrences += countInThisDiary;
-                        diaryOccurrences++;
-                    }
-                }
-
-                if (totalOccurrences >= 1)
-                {
-                    wordStats.Add((word, totalOccurrences, diaryOccurrences));
-                }
-            }
-
-            // 筛选精炼 Top 20 个高价值核心意象（避免多余碎词撑高垂直空间）
-            var topList = wordStats
+            return globalStats
+                .Select(kvp => (Word: kvp.Key, kvp.Value.TotalCount, kvp.Value.DiaryCount))
                 .OrderByDescending(x => x.TotalCount * 2 + x.DiaryCount)
                 .ThenByDescending(x => x.TotalCount)
                 .Take(20)
                 .ToList();
+        }
 
+        private static SolidColorBrush? GetPaletteBrush(int rank)
+        {
+            try
+            {
+                if (s_cachedPaletteBrushes == null)
+                {
+                    s_cachedPaletteBrushes = new SolidColorBrush?[s_wordCloudPalette.Length];
+                    for (int i = 0; i < s_wordCloudPalette.Length; i++)
+                    {
+                        s_cachedPaletteBrushes[i] = new SolidColorBrush(s_wordCloudPalette[i]);
+                    }
+                }
+                return s_cachedPaletteBrushes[rank % s_cachedPaletteBrushes.Length];
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void ApplyWordCloudItems(List<(string Word, int TotalCount, int DiaryCount)> topList)
+        {
             if (topList.Count == 0)
             {
                 WordCloudWords = new ObservableCollection<WordCloudItem>();
@@ -535,10 +572,9 @@ namespace Journal.ViewModels
             int maxFreq = topList.Max(w => w.TotalCount);
             if (maxFreq <= 0) maxFreq = 1;
 
-            const double MaxFontSize = 50.0; // 上限 50px (核心大词具备强烈视觉张力与主次压迫感)
-            const double MinFontSize = 10.5; // 下限 10.5px (外围小词精巧灵动，与核心大词拉开近 5 倍极差)
+            const double MaxFontSize = 50.0;
+            const double MinFontSize = 10.5;
 
-            // 相对值与梯队名次融合比例计算：1.75 幂次指数级拉开单语大小对比度
             var rawItems = new List<WordCloudItem>(topList.Count);
             int totalWords = topList.Count;
 
@@ -576,18 +612,6 @@ namespace Journal.ViewModels
 
                 double opacity = Math.Round(0.62 + combinedRatio * 0.38, 2);
 
-                var color = s_wordCloudPalette[rank % s_wordCloudPalette.Length];
-
-                SolidColorBrush? brush = null;
-                try
-                {
-                    brush = new SolidColorBrush(color);
-                }
-                catch
-                {
-                    // 非 XAML GUI 宿主环境（如命令行自动化测试）安全防御
-                }
-
                 rawItems.Add(new WordCloudItem
                 {
                     Word = item.Word,
@@ -597,11 +621,10 @@ namespace Journal.ViewModels
                     FontWeight = fontWeight,
                     Padding = padding,
                     Opacity = opacity,
-                    Foreground = brush
+                    Foreground = GetPaletteBrush(rank)
                 });
             }
 
-            // 交由 WordCloudPanel 的黄金分割角椭圆阿基米德螺旋算法进行自由无行感排布
             WordCloudWords = new ObservableCollection<WordCloudItem>(rawItems);
         }
 
@@ -623,48 +646,34 @@ namespace Journal.ViewModels
             var matched = new List<DiaryCardItem>();
             foreach (var entry in validEntries)
             {
-                bool contains = false;
-                string? matchedContent = null;
-                if (!string.IsNullOrEmpty(entry.Title) && entry.Title.Contains(word, StringComparison.OrdinalIgnoreCase))
+                string? content = null;
+                if (_cachedContentMap.TryGetValue(entry.Date.Date, out var cachedText))
                 {
-                    contains = true;
+                    content = cachedText;
                 }
-                else if (!string.IsNullOrEmpty(entry.Excerpt) && entry.Excerpt.Contains(word, StringComparison.OrdinalIgnoreCase))
+
+                bool contains = (!string.IsNullOrEmpty(entry.Title) && entry.Title.Contains(word, StringComparison.OrdinalIgnoreCase)) ||
+                                (!string.IsNullOrEmpty(entry.Excerpt) && entry.Excerpt.Contains(word, StringComparison.OrdinalIgnoreCase));
+
+                if (!contains)
                 {
-                    contains = true;
-                }
-                else
-                {
-                    try
+                    content ??= await SafeReadDiaryAsync(entry.Date);
+                    if (!string.IsNullOrEmpty(content) && content.Contains(word, StringComparison.OrdinalIgnoreCase))
                     {
-                        string content = await _storage.ReadDiaryAsync(entry.Date);
-                        if (content.Contains(word, StringComparison.OrdinalIgnoreCase))
-                        {
-                            contains = true;
-                            matchedContent = content;
-                        }
+                        contains = true;
                     }
-                    catch { }
                 }
 
                 if (contains)
                 {
                     string displayExcerpt = entry.Excerpt;
-                    if (!string.IsNullOrEmpty(matchedContent))
+                    if (string.IsNullOrEmpty(displayExcerpt) || !displayExcerpt.Contains(word, StringComparison.OrdinalIgnoreCase))
                     {
-                        displayExcerpt = ExtractContextualSnippet(matchedContent, word);
-                    }
-                    else if (string.IsNullOrEmpty(displayExcerpt) || !displayExcerpt.Contains(word, StringComparison.OrdinalIgnoreCase))
-                    {
-                        try
+                        content ??= await SafeReadDiaryAsync(entry.Date);
+                        if (!string.IsNullOrEmpty(content) && content.Contains(word, StringComparison.OrdinalIgnoreCase))
                         {
-                            string content = await _storage.ReadDiaryAsync(entry.Date);
-                            if (content.Contains(word, StringComparison.OrdinalIgnoreCase))
-                            {
-                                displayExcerpt = ExtractContextualSnippet(content, word);
-                            }
+                            displayExcerpt = ExtractContextualSnippet(content, word);
                         }
-                        catch { }
                     }
 
                     matched.Add(new DiaryCardItem
@@ -682,16 +691,28 @@ namespace Journal.ViewModels
                 }
             }
 
-            // 校验当前目标词是否发生切换，防止快速连击时旧异步检索结果覆盖新结果
             if (SelectedWord != word) return;
 
-            MatchedDiaries.Clear();
-            foreach (var card in matched)
-            {
-                MatchedDiaries.Add(card);
-            }
+            MatchedDiaries = new ObservableCollection<DiaryCardItem>(matched);
             MatchedCount = MatchedDiaries.Count;
             ViewMode = AnalyticsViewMode.WordList;
+        }
+
+        private async Task<string> SafeReadDiaryAsync(DateTime date)
+        {
+            try
+            {
+                string text = await _storage.ReadDiaryAsync(date);
+                if (!string.IsNullOrEmpty(text))
+                {
+                    _cachedContentMap[date.Date] = text;
+                }
+                return text;
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         public static string ExtractContextualSnippet(string content, string keyword)
@@ -729,7 +750,9 @@ namespace Journal.ViewModels
 
             try
             {
-                string content = await _storage.ReadDiaryAsync(card.Date);
+                string content = _cachedContentMap.TryGetValue(card.Date.Date, out var cached) && !string.IsNullOrWhiteSpace(cached)
+                    ? cached
+                    : await _storage.ReadDiaryAsync(card.Date);
                 ReadingDiaryContent = string.IsNullOrWhiteSpace(content) ? "(暂无记录文本)" : content;
             }
             catch (Exception ex)
@@ -763,14 +786,9 @@ namespace Journal.ViewModels
         [RelayCommand]
         public void CloseReading()
         {
-            if (!string.IsNullOrEmpty(SelectedWord))
-            {
-                ViewMode = AnalyticsViewMode.WordList;
-            }
-            else
-            {
-                ViewMode = AnalyticsViewMode.Overview;
-            }
+            ViewMode = !string.IsNullOrEmpty(SelectedWord)
+                ? AnalyticsViewMode.WordList
+                : AnalyticsViewMode.Overview;
         }
 
         [RelayCommand]

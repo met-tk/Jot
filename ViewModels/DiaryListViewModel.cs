@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -78,10 +79,9 @@ namespace Journal.ViewModels
         #endregion
 
         private readonly Microsoft.UI.Dispatching.DispatcherQueue? _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
-
-        public DiaryListViewModel()
-        {
-        }
+        private readonly SemaphoreSlim _loadSemaphore = new(1, 1);
+        private bool _isBatchUpdatingSelection;
+        private bool _suppressAutoRefresh;
 
         public void Subscribe()
         {
@@ -96,6 +96,8 @@ namespace Journal.ViewModels
 
         private void OnDataChanged()
         {
+            if (_suppressAutoRefresh) return;
+
             if (_dispatcher != null && !_dispatcher.HasThreadAccess)
             {
                 _dispatcher.TryEnqueue(async () =>
@@ -122,8 +124,6 @@ namespace Journal.ViewModels
             }
         }
 
-        private readonly System.Threading.SemaphoreSlim _loadSemaphore = new(1, 1);
-
         public async Task LoadDataAsync()
         {
             await _loadSemaphore.WaitAsync();
@@ -131,7 +131,7 @@ namespace Journal.ViewModels
             {
                 var rawEntries = await _index.GetAllEntriesAsync();
 
-                // 严格门禁：只呈现字数 > 0 且具有实质文字的真实日记，彻底抹除空占位块
+                // 只呈现字数 > 0 且具有实质文字的真实日记
                 var entries = rawEntries
                     .Where(e => e.WordCount > 0 && !string.IsNullOrWhiteSpace(e.Title) && e.Title != "（今日静默，暂无文字）")
                     .ToList();
@@ -139,13 +139,42 @@ namespace Journal.ViewModels
                 // 记录真实写过日记的打卡日期集合，供辅助迷你日历高效渲染
                 ActiveDates = entries.Select(e => e.Date.Date).ToHashSet();
 
-                if (!string.IsNullOrWhiteSpace(SearchKeyword))
+                string kw = SearchKeyword?.Trim() ?? string.Empty;
+                Dictionary<string, string>? contextualSnippetOverrides = null;
+
+                if (!string.IsNullOrEmpty(kw))
                 {
-                    string kw = SearchKeyword.Trim();
-                    entries = entries.Where(e =>
-                        (!string.IsNullOrEmpty(e.Excerpt) && e.Excerpt.Contains(kw, StringComparison.OrdinalIgnoreCase)) ||
-                        (!string.IsNullOrEmpty(e.Title) && e.Title.Contains(kw, StringComparison.OrdinalIgnoreCase)) ||
-                        e.Id.Contains(kw, StringComparison.OrdinalIgnoreCase)).ToList();
+                    contextualSnippetOverrides = new Dictionary<string, string>(StringComparer.Ordinal);
+                    var filtered = new List<DiaryEntry>();
+
+                    foreach (var e in entries)
+                    {
+                        bool headerOrIdMatch =
+                            (!string.IsNullOrEmpty(e.Title) && e.Title.Contains(kw, StringComparison.OrdinalIgnoreCase)) ||
+                            e.Id.Contains(kw, StringComparison.OrdinalIgnoreCase);
+
+                        bool excerptMatch = !string.IsNullOrEmpty(e.Excerpt) && e.Excerpt.Contains(kw, StringComparison.OrdinalIgnoreCase);
+
+                        if (headerOrIdMatch || excerptMatch)
+                        {
+                            filtered.Add(e);
+                            continue;
+                        }
+
+                        // 全文深度检索：当标题与前 120 字摘要未命中时，检索完整日记正文并提取上下文片段
+                        try
+                        {
+                            string fullText = await _storage.LoadDiaryContentAsync(e.Date);
+                            if (!string.IsNullOrEmpty(fullText) && fullText.Contains(kw, StringComparison.OrdinalIgnoreCase))
+                            {
+                                contextualSnippetOverrides[e.Id] = AnalyticsViewModel.ExtractContextualSnippet(fullText, kw);
+                                filtered.Add(e);
+                            }
+                        }
+                        catch { }
+                    }
+
+                    entries = filtered;
                 }
 
                 TotalEntriesCount = entries.Count;
@@ -176,17 +205,24 @@ namespace Journal.ViewModels
 
                     foreach (var entry in g.OrderByDescending(e => e.Date))
                     {
+                        string displayExcerpt = entry.Excerpt ?? string.Empty;
+                        if (contextualSnippetOverrides != null && contextualSnippetOverrides.TryGetValue(entry.Id, out var snippet))
+                        {
+                            displayExcerpt = snippet;
+                        }
+
                         var card = new DiaryCardItem
                         {
                             Id = entry.Id,
                             Date = entry.Date,
                             Title = entry.Title ?? string.Empty,
-                            Excerpt = entry.Excerpt ?? string.Empty,
+                            Excerpt = displayExcerpt,
                             WordCount = entry.WordCount,
                             TimestampsCount = entry.TimestampsCount,
                             FilePath = entry.FullPath ?? string.Empty,
                             RawEntry = entry,
-                            IsMultiSelectVisible = IsMultiSelectMode
+                            IsMultiSelectVisible = IsMultiSelectMode,
+                            HighlightKeyword = string.IsNullOrEmpty(kw) ? null : kw
                         };
 
                         card.SelectionChanged += OnCardSelectionChanged;
@@ -196,7 +232,7 @@ namespace Journal.ViewModels
                     newGroups.Add(groupItem);
                 }
 
-                // 原子替换集合，避免 ItemsControl 在布局中途收到连续 Reset/Add 引发原生测量异常
+                // 原子替换集合
                 Groups = newGroups;
                 RecalculateSelection();
             }
@@ -212,6 +248,7 @@ namespace Journal.ViewModels
 
         private void OnCardSelectionChanged()
         {
+            if (_isBatchUpdatingSelection) return;
             RecalculateSelection();
         }
 
@@ -234,13 +271,20 @@ namespace Journal.ViewModels
             SelectedTotalWords = words;
         }
 
-        private System.Threading.CancellationTokenSource? _searchCts;
+        private CancellationTokenSource? _searchCts;
 
         partial void OnSearchKeywordChanged(string value)
         {
-            _searchCts?.Cancel();
-            _searchCts = new System.Threading.CancellationTokenSource();
+            var oldCts = _searchCts;
+            _searchCts = new CancellationTokenSource();
             var token = _searchCts.Token;
+
+            try
+            {
+                oldCts?.Cancel();
+                oldCts?.Dispose();
+            }
+            catch { }
 
             _ = Task.Run(async () =>
             {
@@ -315,12 +359,20 @@ namespace Journal.ViewModels
         [RelayCommand]
         public void SelectAll()
         {
-            foreach (var g in Groups)
+            _isBatchUpdatingSelection = true;
+            try
             {
-                foreach (var item in g.Entries)
+                foreach (var g in Groups)
                 {
-                    item.IsSelected = true;
+                    foreach (var item in g.Entries)
+                    {
+                        item.IsSelected = true;
+                    }
                 }
+            }
+            finally
+            {
+                _isBatchUpdatingSelection = false;
             }
             RecalculateSelection();
         }
@@ -328,12 +380,20 @@ namespace Journal.ViewModels
         [RelayCommand]
         public void UnselectAll()
         {
-            foreach (var g in Groups)
+            _isBatchUpdatingSelection = true;
+            try
             {
-                foreach (var item in g.Entries)
+                foreach (var g in Groups)
                 {
-                    item.IsSelected = false;
+                    foreach (var item in g.Entries)
+                    {
+                        item.IsSelected = false;
+                    }
                 }
+            }
+            finally
+            {
+                _isBatchUpdatingSelection = false;
             }
             RecalculateSelection();
         }
@@ -341,12 +401,20 @@ namespace Journal.ViewModels
         [RelayCommand]
         public void InvertSelection()
         {
-            foreach (var g in Groups)
+            _isBatchUpdatingSelection = true;
+            try
             {
-                foreach (var item in g.Entries)
+                foreach (var g in Groups)
                 {
-                    item.IsSelected = !item.IsSelected;
+                    foreach (var item in g.Entries)
+                    {
+                        item.IsSelected = !item.IsSelected;
+                    }
                 }
+            }
+            finally
+            {
+                _isBatchUpdatingSelection = false;
             }
             RecalculateSelection();
         }
@@ -364,7 +432,16 @@ namespace Journal.ViewModels
                     _storage.MoveFileToTrash(filePath, date);
                 }
                 _storage.DeleteDiaryFile(date);
-                await _index.DeleteEntryAsync(date);
+
+                _suppressAutoRefresh = true;
+                try
+                {
+                    await _index.DeleteEntryAsync(date);
+                }
+                finally
+                {
+                    _suppressAutoRefresh = false;
+                }
 
                 if (IsReadingDay && ReadingCard?.Date.Date == date.Date)
                 {
@@ -397,7 +474,6 @@ namespace Journal.ViewModels
 
             if (selectedCards.Count == 0) return 0;
 
-            // 1. 软删除磁盘物理文件至回收站（包含已知 FilePath 与标准路径）
             foreach (var card in selectedCards)
             {
                 if (!string.IsNullOrWhiteSpace(card.FilePath) && File.Exists(card.FilePath))
@@ -407,11 +483,17 @@ namespace Journal.ViewModels
                 _storage.DeleteDiaryFile(card.Date);
             }
 
-            // 2. 事务批量从 SQLite 索引删除
             var selectedDates = selectedCards.Select(c => c.Date).ToList();
-            await _index.DeleteEntriesAsync(selectedDates);
+            _suppressAutoRefresh = true;
+            try
+            {
+                await _index.DeleteEntriesAsync(selectedDates);
+            }
+            finally
+            {
+                _suppressAutoRefresh = false;
+            }
 
-            // 3. 退出多选并重载
             IsMultiSelectMode = false;
             await LoadDataAsync();
             return selectedDates.Count;
@@ -445,8 +527,7 @@ namespace Journal.ViewModels
                 return new ExportResult(false, 0, 0, destinationPath, "未选中任何日记");
             }
 
-            string desc = $"日记导出 ({entries.Count} 篇)";
-            return await _export.ExportEntriesAsync(entries, format, destinationPath, desc);
+            return await _export.ExportEntriesAsync(entries, format, destinationPath);
         }
 
         #endregion

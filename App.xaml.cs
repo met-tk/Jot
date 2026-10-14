@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Journal.Services;
 
@@ -7,6 +9,8 @@ namespace Journal
     public partial class App : Application
     {
         public static Window? MainWindowInstance { get; private set; }
+        private static readonly object s_crashLogLock = new();
+        private const long MaxCrashLogBytes = 2 * 1024 * 1024; // 2MB 日志滚动上限
 
         public App()
         {
@@ -24,7 +28,7 @@ namespace Journal
                 WriteCrashLog("AppDomain.UnhandledException", $"{e.ExceptionObject}");
             };
 
-            System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (sender, e) =>
+            TaskScheduler.UnobservedTaskException += (sender, e) =>
             {
                 WriteCrashLog("UnobservedTaskException", $"{e.Exception}");
                 e.SetObserved();
@@ -37,12 +41,22 @@ namespace Journal
             System.Diagnostics.Debug.WriteLine(msg);
             try
             {
-                string logDir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "JournalData");
-                if (!System.IO.Directory.Exists(logDir))
+                lock (s_crashLogLock)
                 {
-                    System.IO.Directory.CreateDirectory(logDir);
+                    string logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "JournalData");
+                    if (!Directory.Exists(logDir))
+                    {
+                        Directory.CreateDirectory(logDir);
+                    }
+                    string logPath = Path.Combine(logDir, "crash.log");
+                    var fi = new FileInfo(logPath);
+                    if (fi.Exists && fi.Length > MaxCrashLogBytes)
+                    {
+                        string archivePath = Path.Combine(logDir, "crash.old.log");
+                        File.Move(logPath, archivePath, overwrite: true);
+                    }
+                    File.AppendAllText(logPath, msg);
                 }
-                System.IO.File.AppendAllText(System.IO.Path.Combine(logDir, "crash.log"), msg);
             }
             catch { }
         }
@@ -65,8 +79,9 @@ namespace Journal
                 SoundEffectService.Instance.SetVolume(cfg.SoundVolume);
             };
 
-            // 预热并保证本地 Assets 音频文件就绪（若发布包已内置则零写入跳过）
-            PcmAudioSynthesizer.EnsureAudioAssetsWritten(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets"));
+            // 后台异步预热并校验本地 Assets 音频文件（避免阻塞冷启动 UI 线程）
+            string assetsDir = Path.Combine(AppContext.BaseDirectory, "Assets");
+            _ = Task.Run(() => PcmAudioSynthesizer.EnsureAudioAssetsWritten(assetsDir));
 
             // 2. 配置 UI 线程分发队列，确保后台索引同步事件在 UI 线程安全派发
             DiaryIndexService.Instance.SetDispatcherQueue(Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());

@@ -227,9 +227,6 @@ namespace Journal.Views
 
             this.DispatcherQueue.TryEnqueue(() =>
             {
-                _lastTypographyFont = settings.FontFamily;
-                _lastTypographySize = settings.FontSize;
-                _lastTypographySpacing = settings.LineSpacing;
                 ApplyTypography(settings);
             });
         }
@@ -294,17 +291,35 @@ namespace Journal.Views
         {
             try
             {
+                bool fontOrSizeChanged = !string.Equals(_lastTypographyFont, settings.FontFamily, StringComparison.Ordinal) ||
+                                         Math.Abs(_lastTypographySize - settings.FontSize) >= 0.01;
+
                 _lastTypographyFont = settings.FontFamily;
                 _lastTypographySize = settings.FontSize;
                 _lastTypographySpacing = settings.LineSpacing;
 
-                // 1. 设置字体与字号
-                ContentEditorBox.FontFamily = AppSettings.BuildXamlFontFamily(settings.FontFamily);
-                ContentEditorBox.FontSize = settings.FontSize;
+                // 1. 仅当字体或字号确实改变时更新控件属性，避免无效布局重排
+                if (fontOrSizeChanged)
+                {
+                    ContentEditorBox.FontFamily = AppSettings.BuildXamlFontFamily(settings.FontFamily);
+                    ContentEditorBox.FontSize = settings.FontSize;
+                }
 
                 // 2. 动态应用多倍行距到 RichEdit 文档模型
+                ApplyDocumentLineSpacingOnly(settings.LineSpacing);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ApplyTypography Error] {ex.Message}");
+            }
+        }
+
+        private void ApplyDocumentLineSpacingOnly(double lineSpacing)
+        {
+            try
+            {
                 var doc = ContentEditorBox.Document;
-                float lineSpacingMultiple = (float)Math.Clamp(settings.LineSpacing, 1.2, 2.2);
+                float lineSpacingMultiple = (float)Math.Clamp(lineSpacing, 1.2, 2.2);
 
                 var defaultFormat = doc.GetDefaultParagraphFormat();
                 defaultFormat.SetLineSpacing(LineSpacingRule.Multiple, lineSpacingMultiple);
@@ -313,10 +328,7 @@ namespace Journal.Views
                 var wholeStory = doc.GetRange(0, int.MaxValue);
                 wholeStory.ParagraphFormat.SetLineSpacing(LineSpacingRule.Multiple, lineSpacingMultiple);
             }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ApplyTypography Error] {ex.Message}");
-            }
+            catch { }
         }
 
         #endregion
@@ -623,7 +635,7 @@ namespace Journal.Views
             try
             {
                 ContentEditorBox.Document.SetText(TextSetOptions.None, snapshot.Text);
-                ApplyTypography(AppSettingsService.Instance.CurrentSettings);
+                ApplyDocumentLineSpacingOnly(AppSettingsService.Instance.CurrentSettings.LineSpacing);
 
                 string actualText = GetCleanEditorText();
                 int maxPos = actualText.Length;

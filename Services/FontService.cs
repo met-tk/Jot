@@ -13,6 +13,11 @@ namespace Journal.Services
         private List<string>? _cachedSystemFonts;
         private readonly object _lock = new();
 
+        private static readonly string[] s_styleSuffixes =
+        {
+            " ExtraBold", " SemiBold", " SemiLight", " Bold", " Italic", " Light", " Black", " Medium", " Thin", " Regular"
+        };
+
         /// <summary>
         /// 精选推荐字体（优先置顶）
         /// </summary>
@@ -67,7 +72,7 @@ namespace Journal.Services
             }
         }
 
-        private void ScanFontsFromRegistryKey(RegistryKey rootKey, string subKeyPath, HashSet<string> fontSet)
+        private static void ScanFontsFromRegistryKey(RegistryKey rootKey, string subKeyPath, HashSet<string> fontSet)
         {
             try
             {
@@ -79,21 +84,19 @@ namespace Journal.Services
                     if (string.IsNullOrWhiteSpace(valueName)) continue;
 
                     // 剥离后缀，如 "Arial (TrueType)", "Segoe UI Bold (TrueType)", "SimSun & NSimSun (TrueType)"
-                    string rawName = valueName;
-                    int parenIdx = rawName.IndexOf('(');
+                    ReadOnlySpan<char> rawSpan = valueName.AsSpan();
+                    int parenIdx = rawSpan.IndexOf('(');
                     if (parenIdx > 0)
                     {
-                        rawName = rawName.Substring(0, parenIdx).Trim();
+                        rawSpan = rawSpan[..parenIdx].Trim();
                     }
 
-                    // 处理复合字体名称，如 "SimSun & NSimSun"
+                    string rawName = rawSpan.ToString();
                     var subNames = rawName.Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                     foreach (var name in subNames)
                     {
-                        string cleaned = name.Trim();
-                        // 过滤纯粗体/斜体衍生名，只保留字体族根名称或常用字体
-                        cleaned = StripStyleSuffixes(cleaned);
-                        if (!string.IsNullOrWhiteSpace(cleaned) && cleaned.Length > 1)
+                        string cleaned = StripStyleSuffixes(name);
+                        if (cleaned.Length > 1)
                         {
                             fontSet.Add(cleaned);
                         }
@@ -108,17 +111,23 @@ namespace Journal.Services
 
         private static string StripStyleSuffixes(string fontName)
         {
-            // 常见字重样式后缀
-            string[] styles = { " Bold", " Italic", " Light", " SemiBold", " ExtraBold", " Black", " Medium", " Thin", " Regular" };
-            string result = fontName;
-            foreach (var style in styles)
+            ReadOnlySpan<char> span = fontName.AsSpan().Trim();
+            bool strippedAny;
+            do
             {
-                if (result.EndsWith(style, StringComparison.OrdinalIgnoreCase))
+                strippedAny = false;
+                foreach (var style in s_styleSuffixes)
                 {
-                    result = result.Substring(0, result.Length - style.Length).Trim();
+                    if (span.EndsWith(style.AsSpan(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        span = span[..^style.Length].TrimEnd();
+                        strippedAny = true;
+                        break;
+                    }
                 }
-            }
-            return result;
+            } while (strippedAny && span.Length > 0);
+
+            return span.ToString();
         }
     }
 }

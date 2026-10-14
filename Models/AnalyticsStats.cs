@@ -15,5 +15,6 @@ namespace Journal.Models
     {
         public string MonthLabel { get; set; } = string.Empty;
         public int WordCount { get; set; }
+        public int MaxWordCount { get; set; } = 3000;
     }
 }

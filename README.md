@@ -4,7 +4,7 @@
   <p><strong>A simple and elegant journaling app · 纯粹、优雅的桌面沉浸式日记应用</strong></p>
   <p>
     <a href="https://github.com/met-tk/Jot/releases/latest">
-      <img src="https://img.shields.io/badge/Release-v1.2.0-107C41?style=flat-square" alt="Release v1.2.0" />
+      <img src="https://img.shields.io/badge/Release-v1.2.1-107C41?style=flat-square" alt="Release v1.2.1" />
     </a>
     <img src="https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D4?style=flat-square" alt="Platform" />
     <img src="https://img.shields.io/badge/Framework-.NET%208%20%2B%20WinUI%203-512BD4?style=flat-square" alt="Framework" />
@@ -77,7 +77,7 @@
 
 ## 📦 下载与安装 (Installation)
 
-前往 [**Releases 页面**](https://github.com/met-tk/Jot/releases/latest) 下载最新安装包 **`Jot_Setup_v1.2.0.exe`**：
+前往 [**Releases 页面**](https://github.com/met-tk/Jot/releases/latest) 下载最新安装包 **`Jot_Setup_v1.2.1.exe`**：
 - 内置独立 .NET 8 与 Windows App SDK 运行时，**无需额外安装任何环境**，双击即可完成安装与桌面快捷方式创建。
 
 ---

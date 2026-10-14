@@ -403,7 +403,7 @@
                                                 BorderBrush="{ThemeResource AppBadgeBorderBrush}"
                                                 BorderThickness="1"
                                                 CornerRadius="6" Padding="8,3">
-                                            <TextBlock Text="{x:Bind ViewModel.SelectedDayWordCount, Mode=OneWay}"
+                                            <TextBlock Text="{x:Bind ViewModel.SelectedDayWordCountDisplay, Mode=OneWay}"
                                                        FontSize="12" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontWeight="SemiBold"/>
                                         </Border>
                                         <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"

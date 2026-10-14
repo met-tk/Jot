@@ -2,7 +2,6 @@ using System;
 using System.Diagnostics;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Journal.Models;
 using Journal.ViewModels;
 
 namespace Journal.Views
@@ -19,41 +18,12 @@ namespace Journal.Views
             this.Loaded += (s, e) =>
             {
                 ViewModel.Subscribe();
-                UpdatePreviewTypography();
             };
 
             this.Unloaded += (s, e) =>
             {
                 ViewModel.Unsubscribe();
             };
-
-            ViewModel.PropertyChanged += (s, e) =>
-            {
-                if (e.PropertyName is nameof(ViewModel.SelectedFontFamily)
-                    or nameof(ViewModel.FontSize)
-                    or nameof(ViewModel.LineSpacing)
-                    or nameof(ViewModel.SamplePreviewText))
-                {
-                    UpdatePreviewTypography();
-                }
-            };
-        }
-
-        private void UpdatePreviewTypography()
-        {
-            try
-            {
-                if (TypographyPreviewText != null)
-                {
-                    TypographyPreviewText.FontFamily = AppSettings.BuildXamlFontFamily(ViewModel.SelectedFontFamily);
-                    TypographyPreviewText.FontSize = ViewModel.FontSize;
-                    TypographyPreviewText.LineHeight = ViewModel.PreviewLineHeight;
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[UpdatePreviewTypography Error] {ex.Message}");
-            }
         }
 
         private void ImportDiaries_Click(object sender, RoutedEventArgs e)

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -63,7 +64,10 @@ namespace Journal.ViewModels
         private string _selectedDayDiaryContent = string.Empty;
 
         [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(SelectedDayWordCountDisplay))]
         private int _selectedDayWordCount = 0;
+
+        public string SelectedDayWordCountDisplay => $"{SelectedDayWordCount} 字";
 
         [ObservableProperty]
         private int _selectedDayTimestampsCount = 0;
@@ -99,7 +103,8 @@ namespace Journal.ViewModels
             UpdateUIState();
         }
 
-        private readonly System.Threading.SemaphoreSlim _refreshSemaphore = new(1, 1);
+        private readonly SemaphoreSlim _refreshSemaphore = new(1, 1);
+        private bool _suppressAutoRefresh;
 
         public void Subscribe()
         {
@@ -114,6 +119,7 @@ namespace Journal.ViewModels
 
         private async void OnDataChanged()
         {
+            if (_suppressAutoRefresh) return;
             try
             {
                 await RefreshDataAsync();
@@ -178,10 +184,7 @@ namespace Journal.ViewModels
             }
         }
 
-        public async Task LoadCalendarAsync()
-        {
-            await RefreshDataAsync();
-        }
+        public Task LoadCalendarAsync() => RefreshDataAsync();
 
         public HashSet<DateTime> ActiveDates { get; } = new();
 
@@ -205,10 +208,10 @@ namespace Journal.ViewModels
                 TotalYearWords = yearEntries.Sum(e => e.WordCount);
                 TotalActiveDays = yearEntries.Count(e => e.WordCount > 0 || e.TimestampsCount > 0 || !string.IsNullOrWhiteSpace(e.Title));
 
-                var analytics = await _index.CalculateAnalyticsAsync();
+                var analytics = await _index.CalculateAnalyticsAsync(allEntries);
                 CurrentStreak = analytics.CurrentStreak;
 
-                // 同步构建年总览月份与当前月特写天数，确保年/月/日三级视图切换时数据集完全就绪，绝无空白
+                // 同步构建年总览月份与当前月特写天数
                 var months = new ObservableCollection<YearMonthItem>();
                 for (int m = 1; m <= 12; m++)
                 {
@@ -282,9 +285,9 @@ namespace Journal.ViewModels
             return item;
         }
 
-        private List<DayHeatmapItem> BuildMonthGridDays(int year, int month, Dictionary<DateTime, DiaryEntry> entryMap)
+        private static List<DayHeatmapItem> BuildMonthGridDays(int year, int month, Dictionary<DateTime, DiaryEntry> entryMap)
         {
-            var list = new List<DayHeatmapItem>();
+            var list = new List<DayHeatmapItem>(42);
             var firstDay = new DateTime(year, month, 1);
             int offset = (int)firstDay.DayOfWeek; // 0 = 周日
             var startDate = firstDay.AddDays(-offset);
@@ -317,7 +320,7 @@ namespace Journal.ViewModels
                     }
                 }
 
-                var dayItem = new DayHeatmapItem
+                list.Add(new DayHeatmapItem
                 {
                     Date = curDate,
                     IsCurrentMonth = isCurrentMonth,
@@ -325,9 +328,7 @@ namespace Journal.ViewModels
                     TimestampsCount = entry?.TimestampsCount ?? 0,
                     Excerpt = entry?.Excerpt ?? string.Empty,
                     CalendarExcerpt = calExcerpt
-                };
-
-                list.Add(dayItem);
+                });
             }
 
             return list;
@@ -336,14 +337,9 @@ namespace Journal.ViewModels
         [RelayCommand]
         public async Task ToggleYearMonthViewAsync()
         {
-            if (ViewMode == CalendarViewMode.YearOverview)
-            {
-                ViewMode = CalendarViewMode.MonthDetail;
-            }
-            else
-            {
-                ViewMode = CalendarViewMode.YearOverview;
-            }
+            ViewMode = ViewMode == CalendarViewMode.YearOverview
+                ? CalendarViewMode.MonthDetail
+                : CalendarViewMode.YearOverview;
             await RefreshDataAsync();
         }
 
@@ -510,7 +506,17 @@ namespace Journal.ViewModels
             {
                 var date = SelectedDate.Date;
                 _storage.DeleteDiaryFile(date);
-                await _index.DeleteEntryAsync(date);
+
+                _suppressAutoRefresh = true;
+                try
+                {
+                    await _index.DeleteEntryAsync(date);
+                }
+                finally
+                {
+                    _suppressAutoRefresh = false;
+                }
+
                 await RefreshDataAsync();
                 return true;
             }

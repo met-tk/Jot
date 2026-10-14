@@ -30,9 +30,9 @@ namespace Journal.ViewModels
     {
         private readonly ImportService _importService = ImportService.Instance;
         private readonly DiaryStorageService _storageService = DiaryStorageService.Instance;
-        private readonly DiaryIndexService _indexService = DiaryIndexService.Instance;
 
         private readonly List<RawImportSource> _rawSources = new();
+        private bool _isBatchUpdatingSelection;
 
         public ObservableCollection<ImportedEntryPreview> AllEntries { get; } = new();
         public ObservableCollection<ImportedEntryPreview> FilteredEntries { get; } = new();
@@ -106,8 +106,8 @@ namespace Journal.ViewModels
         public bool SelectedEntryHasConflict => SelectedEntry?.HasConflict ?? false;
         public int SelectedEntryExistingWords => SelectedEntry?.ExistingWordCount ?? 0;
         public int SelectedEntryIncomingWords => SelectedEntry?.WordCount ?? 0;
-        public int SelectedEntryMergedWords => SelectedEntry != null 
-            ? _storageService.CalculateWordCount(SelectedEntry.SimulatedMergedContent) 
+        public int SelectedEntryMergedWords => SelectedEntry != null
+            ? _storageService.CalculateWordCount(SelectedEntry.SimulatedMergedContent)
             : 0;
 
         public bool CanExecuteImport => HasEntries && SelectedCount > 0 && !IsImporting && !IsScanning;
@@ -139,7 +139,6 @@ namespace Journal.ViewModels
 
         partial void OnPreviewTabModeChanged(ImportPreviewTabMode value)
         {
-            // 切换预览模式 Tab 时刷新选中条目相关 UI
             OnPropertyChanged(nameof(SelectedEntry));
         }
 
@@ -305,7 +304,6 @@ namespace Journal.ViewModels
                 if (allFilePaths.Count == 0)
                 {
                     StatusMessage = "未发现支持的日记文件 (支持 .md, .txt, .markdown, .json, .zip)";
-                    IsScanning = false;
                     return;
                 }
 
@@ -362,7 +360,6 @@ namespace Journal.ViewModels
 
             var summary = await _importService.ProcessSourcesWithRuleAsync(_rawSources, rule);
 
-            // 解除旧条目事件监听
             foreach (var old in AllEntries)
             {
                 old.SelectionChanged -= OnEntrySelectionChanged;
@@ -403,6 +400,7 @@ namespace Journal.ViewModels
 
         private void OnEntrySelectionChanged()
         {
+            if (_isBatchUpdatingSelection) return;
             UpdateSelectedCount();
         }
 
@@ -442,7 +440,6 @@ namespace Journal.ViewModels
 
             try
             {
-                // 针对当前被修改的条目重新判定本地冲突状态
                 bool exists = _storageService.DiaryExists(entry.TargetDate);
                 entry.HasConflict = exists;
                 if (exists)
@@ -464,7 +461,6 @@ namespace Journal.ViewModels
                     entry.SimulatedMergedContent = entry.Content;
                 }
 
-                // 更新冲突数统计与筛选
                 ConflictedCount = AllEntries.Count(e => e.HasConflict);
                 ApplyFilter();
 
@@ -490,9 +486,17 @@ namespace Journal.ViewModels
         public void SelectAll()
         {
             if (IsImporting) return;
-            foreach (var item in FilteredEntries)
+            _isBatchUpdatingSelection = true;
+            try
             {
-                item.IsSelected = true;
+                foreach (var item in FilteredEntries)
+                {
+                    item.IsSelected = true;
+                }
+            }
+            finally
+            {
+                _isBatchUpdatingSelection = false;
             }
             UpdateSelectedCount();
         }
@@ -501,9 +505,17 @@ namespace Journal.ViewModels
         public void DeselectAll()
         {
             if (IsImporting) return;
-            foreach (var item in FilteredEntries)
+            _isBatchUpdatingSelection = true;
+            try
             {
-                item.IsSelected = false;
+                foreach (var item in FilteredEntries)
+                {
+                    item.IsSelected = false;
+                }
+            }
+            finally
+            {
+                _isBatchUpdatingSelection = false;
             }
             UpdateSelectedCount();
         }
@@ -512,9 +524,17 @@ namespace Journal.ViewModels
         public void InvertSelection()
         {
             if (IsImporting) return;
-            foreach (var item in FilteredEntries)
+            _isBatchUpdatingSelection = true;
+            try
             {
-                item.IsSelected = !item.IsSelected;
+                foreach (var item in FilteredEntries)
+                {
+                    item.IsSelected = !item.IsSelected;
+                }
+            }
+            finally
+            {
+                _isBatchUpdatingSelection = false;
             }
             UpdateSelectedCount();
         }
@@ -665,28 +685,10 @@ namespace Journal.ViewModels
 
                 StatusMessage = $"导入完成: 成功写入 {result.SuccessCount} 篇 (合并追加 {result.MergedCount} 篇, 覆盖 {result.OverwrittenCount} 篇, 跳过 {result.SkippedCount} 篇)";
 
-                // 触发全局数据刷新，更新时间线、日历与统计大盘
-                _indexService.NotifyDataChanged();
-
-                // 刷新已有条目的冲突状态
-                foreach (var entry in AllEntries)
-                {
-                    if (_storageService.DiaryExists(entry.TargetDate))
-                    {
-                        entry.HasConflict = true;
-                        entry.ExistingContent = await _storageService.LoadDiaryContentAsync(entry.TargetDate);
-                        entry.ExistingWordCount = _storageService.CalculateWordCount(entry.ExistingContent);
-                        entry.ExistingTimestampsCount = _storageService.CountTimestamps(entry.ExistingContent);
-                        entry.SimulatedMergedContent = ImportService.GenerateSimulatedMergedContent(
-                            entry.ExistingContent,
-                            entry.Content,
-                            ConflictStrategy,
-                            entry.TargetDate);
-                    }
-                }
-
                 ConflictedCount = AllEntries.Count(e => e.HasConflict);
                 ApplyFilter();
+                OnPropertyChanged(nameof(SelectedEntryExistingWords));
+                OnPropertyChanged(nameof(SelectedEntryMergedWords));
             }
             catch (Exception ex)
             {

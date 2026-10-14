@@ -7,7 +7,7 @@ namespace Journal.Services
     /// <summary>
     /// 全局应用设置持久化与分发服务接口
     /// </summary>
-    public interface IAppSettingsService
+    public interface IAppSettingsService : IDisposable
     {
         /// <summary>
         /// 当前全局设置快照

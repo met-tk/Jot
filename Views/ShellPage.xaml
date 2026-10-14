@@ -52,9 +52,6 @@
                             CornerRadius="14"
                             HorizontalAlignment="Center"
                             ToolTipService.ToolTip="今日 (Ctrl+1)">
-                        <Button.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="Number1" Modifiers="Control" />
-                        </Button.KeyboardAccelerators>
                         <Grid Width="44" Height="44">
                             <Border x:Name="BgToday"
                                     CornerRadius="14"
@@ -97,9 +94,6 @@
                             CornerRadius="14"
                             HorizontalAlignment="Center"
                             ToolTipService.ToolTip="日历 (Ctrl+2)">
-                        <Button.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="Number2" Modifiers="Control" />
-                        </Button.KeyboardAccelerators>
                         <Grid Width="44" Height="44">
                             <Border x:Name="BgCalendar"
                                     CornerRadius="14"
@@ -142,9 +136,6 @@
                             CornerRadius="14"
                             HorizontalAlignment="Center"
                             ToolTipService.ToolTip="目录 (Ctrl+3)">
-                        <Button.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="Number3" Modifiers="Control" />
-                        </Button.KeyboardAccelerators>
                         <Grid Width="44" Height="44">
                             <Border x:Name="BgList"
                                     CornerRadius="14"
@@ -187,9 +178,6 @@
                             CornerRadius="14"
                             HorizontalAlignment="Center"
                             ToolTipService.ToolTip="统计 (Ctrl+4)">
-                        <Button.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="Number4" Modifiers="Control" />
-                        </Button.KeyboardAccelerators>
                         <Grid Width="44" Height="44">
                             <Border x:Name="BgAnalytics"
                                     CornerRadius="14"
@@ -232,9 +220,6 @@
                             CornerRadius="14"
                             HorizontalAlignment="Center"
                             ToolTipService.ToolTip="导入 (Ctrl+5)">
-                        <Button.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="Number5" Modifiers="Control" />
-                        </Button.KeyboardAccelerators>
                         <Grid Width="44" Height="44">
                             <Border x:Name="BgImport"
                                     CornerRadius="14"
@@ -288,9 +273,6 @@
                             CornerRadius="14"
                             HorizontalAlignment="Center"
                             ToolTipService.ToolTip="设置 (Ctrl+6)">
-                        <Button.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="Number6" Modifiers="Control" />
-                        </Button.KeyboardAccelerators>
                         <Grid Width="44" Height="44">
                             <Border x:Name="BgSettings"
                                     CornerRadius="14"

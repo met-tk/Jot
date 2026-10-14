@@ -15,8 +15,7 @@ namespace Journal.Views
 {
     public sealed partial class ImportPage : Page, IHierarchicalNavigable
     {
-        private static ImportViewModel? _cachedViewModel;
-        public ImportViewModel ViewModel => _cachedViewModel ??= new ImportViewModel();
+        public ImportViewModel ViewModel { get; } = new();
 
         private static readonly SolidColorBrush s_conflictBadgeBgBrush = new(Windows.UI.Color.FromArgb(0x28, 0xE0, 0x80, 0x00));
         private static readonly SolidColorBrush s_newBadgeBgBrush = new(Windows.UI.Color.FromArgb(0x22, 0x10, 0x89, 0x3E));
@@ -66,24 +65,27 @@ namespace Journal.Views
 
         private void UpdateTabButtonStyles()
         {
+            var res = Application.Current?.Resources;
+            if (res == null) return;
+
             if (ViewModel.PreviewTabMode == ImportPreviewTabMode.SideBySide)
             {
-                if (Application.Current.Resources.TryGetValue("AccentButtonStyle", out var accentStyle) && accentStyle is Style s1)
+                if (res.TryGetValue("AccentButtonStyle", out var accentStyle) && accentStyle is Style s1)
                 {
                     TabBtnSideBySide.Style = s1;
                 }
-                if (Application.Current.Resources.TryGetValue("DefaultButtonStyle", out var defaultStyle) && defaultStyle is Style s2)
+                if (res.TryGetValue("DefaultButtonStyle", out var defaultStyle) && defaultStyle is Style s2)
                 {
                     TabBtnMerged.Style = s2;
                 }
             }
             else
             {
-                if (Application.Current.Resources.TryGetValue("DefaultButtonStyle", out var defaultStyle) && defaultStyle is Style s1)
+                if (res.TryGetValue("DefaultButtonStyle", out var defaultStyle) && defaultStyle is Style s1)
                 {
                     TabBtnSideBySide.Style = s1;
                 }
-                if (Application.Current.Resources.TryGetValue("AccentButtonStyle", out var accentStyle) && accentStyle is Style s2)
+                if (res.TryGetValue("AccentButtonStyle", out var accentStyle) && accentStyle is Style s2)
                 {
                     TabBtnMerged.Style = s2;
                 }

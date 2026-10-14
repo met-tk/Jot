@@ -1,4 +1,6 @@
 using System;
+using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -53,13 +55,6 @@ namespace Journal
             {
                 _windowBoundsDebounceTimer.Stop();
                 CommitCurrentWindowBounds();
-            };
-
-            this.Closed += (s, e) =>
-            {
-                _windowBoundsDebounceTimer?.Stop();
-                CommitCurrentWindowBounds();
-                _windowBoundsDebounceTimer = null;
             };
 
             if (_appWindow != null)
@@ -126,20 +121,64 @@ namespace Journal
             ApplyThemeAndBackdrop(initialSettings.BackdropType, initialSettings.ThemeAmbiance, initialSettings.BackgroundTintOpacity);
             ApplyUiFont(initialSettings.UiFontFamily);
 
-            AppSettingsService.Instance.SettingsChanged += (s, settings) =>
-            {
-                this.DispatcherQueue.TryEnqueue(() =>
-                {
-                    ApplyThemeAndBackdrop(settings.BackdropType, settings.ThemeAmbiance, settings.BackgroundTintOpacity);
-                    ApplyUiFont(settings.UiFontFamily);
-                });
-            };
+            AppSettingsService.Instance.SettingsChanged += OnAppSettingsChanged;
 
             // 5. 挂载窗口退出前确认拦截弹窗
             SetupWindowClosing();
 
             // 6. 挂载 Win32 消息子类化拦截 (WM_APPCOMMAND / WM_XBUTTONUP 鼠标侧键兜底)
             HookWindowSubclass(hWnd);
+
+            // 7. 统一窗口关闭与资源释放逻辑
+            this.Closed += OnWindowClosed;
+        }
+
+        private void OnAppSettingsChanged(object? sender, AppSettings settings)
+        {
+            this.DispatcherQueue?.TryEnqueue(() =>
+            {
+                ApplyThemeAndBackdrop(settings.BackdropType, settings.ThemeAmbiance, settings.BackgroundTintOpacity);
+                ApplyUiFont(settings.UiFontFamily);
+            });
+        }
+
+        private void OnWindowClosed(object sender, WindowEventArgs e)
+        {
+            try
+            {
+                _windowBoundsDebounceTimer?.Stop();
+                CommitCurrentWindowBounds();
+                _windowBoundsDebounceTimer = null;
+            }
+            catch { }
+
+            try
+            {
+                AppSettingsService.Instance.SettingsChanged -= OnAppSettingsChanged;
+                if (_appWindow != null)
+                {
+                    _appWindow.Changed -= OnAppWindowChanged;
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (_subclassedHwnd != IntPtr.Zero && _subclassProc != null)
+                {
+                    RemoveWindowSubclass(_subclassedHwnd, _subclassProc, (UIntPtr)101);
+                    _subclassedHwnd = IntPtr.Zero;
+                }
+            }
+            catch { }
+
+            try
+            {
+                SoundEffectService.Instance.Dispose();
+                AppSettingsService.Instance.Dispose();
+                _ = DiaryIndexService.Instance.CloseConnectionAsync();
+            }
+            catch { }
         }
 
         private string? _currentUiFontFamily;
@@ -217,45 +256,44 @@ namespace Journal
                     AmbianceThemeEngine.ApplyToContentDialog(dialog);
 
                     var result = await dialog.ShowAsync();
-                    if (result == ContentDialogResult.Primary)
+                    if (result == ContentDialogResult.Primary || result == ContentDialogResult.Secondary)
                     {
-                        if (editor != null && hasUnsaved)
+                        if (result == ContentDialogResult.Primary && editor != null && hasUnsaved)
                         {
                             await editor.FlushAndSaveCurrentAsync();
                         }
-                        _windowBoundsDebounceTimer?.Stop();
-                        CommitCurrentWindowBounds();
-                        await AppSettingsService.Instance.SaveAsync();
-                        _isCloseConfirmed = true;
-                        this.Close();
-                    }
-                    else if (result == ContentDialogResult.Secondary)
-                    {
-                        _windowBoundsDebounceTimer?.Stop();
-                        CommitCurrentWindowBounds();
-                        await AppSettingsService.Instance.SaveAsync();
-                        _isCloseConfirmed = true;
-                        this.Close();
+                        else if (result == ContentDialogResult.Secondary && editor != null)
+                        {
+                            // 用户明确选择“不保存退出”：放弃未保存变更标志，防止后续 Unloaded 事件误将废弃草稿写入磁盘
+                            editor.ViewModel.DiscardUnsavedChanges();
+                        }
+
+                        await CommitAndCloseAsync();
                     }
                 }
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"[MainWindow.Closing] Exception in closing handler: {ex.Message}");
-                    try
-                    {
-                        _windowBoundsDebounceTimer?.Stop();
-                        CommitCurrentWindowBounds();
-                        _ = AppSettingsService.Instance.SaveAsync();
-                    }
-                    catch { }
-                    _isCloseConfirmed = true;
-                    this.Close();
+                    await CommitAndCloseAsync();
                 }
                 finally
                 {
                     _isClosingDialogShowing = false;
                 }
             };
+        }
+
+        private async Task CommitAndCloseAsync()
+        {
+            try
+            {
+                _windowBoundsDebounceTimer?.Stop();
+                CommitCurrentWindowBounds();
+                await AppSettingsService.Instance.SaveAsync();
+            }
+            catch { }
+            _isCloseConfirmed = true;
+            this.Close();
         }
 
         private string? _currentBackdropType;
@@ -846,25 +884,6 @@ namespace Journal
                 _subclassedHwnd = hWnd;
                 _subclassProc = new SubclassProc(SubclassWndProc);
                 SetWindowSubclass(hWnd, _subclassProc, (UIntPtr)101, UIntPtr.Zero);
-
-                this.Closed += (s, e) =>
-                {
-                    try
-                    {
-                        if (_subclassedHwnd != IntPtr.Zero && _subclassProc != null)
-                        {
-                            RemoveWindowSubclass(_subclassedHwnd, _subclassProc, (UIntPtr)101);
-                            _subclassedHwnd = IntPtr.Zero;
-                        }
-                    }
-                    catch { }
-
-                    try
-                    {
-                        SoundEffectService.Instance.Dispose();
-                    }
-                    catch { }
-                };
             }
             catch (Exception ex)
             {
@@ -888,32 +907,12 @@ namespace Journal
                 short cmd = (short)(((lp >> 16) & 0xFFFF) & ~0xF000);
                 if (cmd == APPCOMMAND_BROWSER_BACKWARD)
                 {
-                    if ((DateTime.UtcNow - _lastSubclassNavTime) >= TimeSpan.FromMilliseconds(200))
-                    {
-                        _lastSubclassNavTime = DateTime.UtcNow;
-                        this.DispatcherQueue.TryEnqueue(async () =>
-                        {
-                            if (Views.ShellPage.Current != null)
-                            {
-                                await Views.ShellPage.Current.TriggerGlobalBackAsync();
-                            }
-                        });
-                    }
+                    TriggerDebouncedNavigation(isForward: false);
                     return (IntPtr)1;
                 }
                 else if (cmd == APPCOMMAND_BROWSER_FORWARD)
                 {
-                    if ((DateTime.UtcNow - _lastSubclassNavTime) >= TimeSpan.FromMilliseconds(200))
-                    {
-                        _lastSubclassNavTime = DateTime.UtcNow;
-                        this.DispatcherQueue.TryEnqueue(async () =>
-                        {
-                            if (Views.ShellPage.Current != null)
-                            {
-                                await Views.ShellPage.Current.TriggerGlobalForwardAsync();
-                            }
-                        });
-                    }
+                    TriggerDebouncedNavigation(isForward: true);
                     return (IntPtr)1;
                 }
             }
@@ -923,37 +922,40 @@ namespace Journal
                 int xbutton = (int)((wp >> 16) & 0xFFFF);
                 if (xbutton == XBUTTON1)
                 {
-                    if ((DateTime.UtcNow - _lastSubclassNavTime) >= TimeSpan.FromMilliseconds(200))
-                    {
-                        _lastSubclassNavTime = DateTime.UtcNow;
-                        this.DispatcherQueue.TryEnqueue(async () =>
-                        {
-                            if (Views.ShellPage.Current != null)
-                            {
-                                await Views.ShellPage.Current.TriggerGlobalBackAsync();
-                            }
-                        });
-                    }
+                    TriggerDebouncedNavigation(isForward: false);
                     return (IntPtr)1;
                 }
                 else if (xbutton == XBUTTON2)
                 {
-                    if ((DateTime.UtcNow - _lastSubclassNavTime) >= TimeSpan.FromMilliseconds(200))
-                    {
-                        _lastSubclassNavTime = DateTime.UtcNow;
-                        this.DispatcherQueue.TryEnqueue(async () =>
-                        {
-                            if (Views.ShellPage.Current != null)
-                            {
-                                await Views.ShellPage.Current.TriggerGlobalForwardAsync();
-                            }
-                        });
-                    }
+                    TriggerDebouncedNavigation(isForward: true);
                     return (IntPtr)1;
                 }
             }
 
             return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+        }
+
+        private void TriggerDebouncedNavigation(bool isForward)
+        {
+            if ((DateTime.UtcNow - _lastSubclassNavTime) < TimeSpan.FromMilliseconds(200))
+            {
+                return;
+            }
+            _lastSubclassNavTime = DateTime.UtcNow;
+            this.DispatcherQueue?.TryEnqueue(async () =>
+            {
+                if (Views.ShellPage.Current != null)
+                {
+                    if (isForward)
+                    {
+                        await Views.ShellPage.Current.TriggerGlobalForwardAsync();
+                    }
+                    else
+                    {
+                        await Views.ShellPage.Current.TriggerGlobalBackAsync();
+                    }
+                }
+            });
         }
 
         #endregion

@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Concurrent;
+using Microsoft.UI.Xaml.Media;
 
 namespace Journal.Models
 {
@@ -7,6 +9,8 @@ namespace Journal.Models
     /// </summary>
     public class AppSettings
     {
+        private static readonly ConcurrentDictionary<string, FontFamily> s_fontFamilyCache = new(StringComparer.OrdinalIgnoreCase);
+
         // 1. 声音与物理音效配置
         public bool IsSoundEnabled { get; set; } = true;
         public string SoundTheme { get; set; } = "Typewriter";
@@ -15,7 +19,6 @@ namespace Journal.Models
 
         // 2. 拟物手感与触觉微动效
         public bool IsHapticVibrationEnabled { get; set; } = true;
-        public bool IsCursorPulseEnabled { get; set; } = true;
 
         // 3. 排版与字体
         public string FontFamily { get; set; } = "Segoe UI Variable Text";
@@ -38,26 +41,10 @@ namespace Journal.Models
         public double CalendarZoomFactor { get; set; } = 1.0;
 
         /// <summary>
-        /// 生成具备安全分层回退链的 FontFamily 字符串
+        /// 生成专为 WinUI 3 XAML / DirectWrite 渲染引擎优化并带缓存的 FontFamily 实例，
+        /// 消除可变光学轴字体复合链导致中文回退字形测量宽度偏窄与重复实例化开销。
         /// </summary>
-        public static string BuildFontFamilyString(string? chosenFont)
-        {
-            return (chosenFont ?? string.Empty).Trim() switch
-            {
-                "霞鹜文楷" or "LXGW WenKai" => "LXGW WenKai, 霞鹜文楷, Segoe UI Variable Text, Microsoft YaHei UI, sans-serif",
-                "思源宋体" or "Source Han Serif" => "Source Han Serif SC, 思源宋体, SimSun, Songti SC, serif",
-                "Cascadia Code" => "Cascadia Code, Consolas, Courier New, monospace",
-                "Microsoft YaHei UI" => "Microsoft YaHei UI, Segoe UI Variable Text, sans-serif",
-                _ when !string.IsNullOrWhiteSpace(chosenFont) => $"{chosenFont}, Segoe UI Variable Text, Microsoft YaHei UI, -apple-system, sans-serif",
-                _ => "Segoe UI Variable Text, Microsoft YaHei UI, -apple-system, sans-serif"
-            };
-        }
-
-        /// <summary>
-        /// 生成专为 WinUI 3 XAML / DirectWrite 渲染引擎优化的 FontFamily 实例，
-        /// 消除可变光学轴字体复合链导致中文回退字形测量宽度偏窄与叠字穿透问题。
-        /// </summary>
-        public static Microsoft.UI.Xaml.Media.FontFamily BuildXamlFontFamily(string? chosenFont)
+        public static FontFamily BuildXamlFontFamily(string? chosenFont)
         {
             var clean = (chosenFont ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(clean)
@@ -69,6 +56,11 @@ namespace Journal.Models
                 return Microsoft.UI.Xaml.Media.FontFamily.XamlAutoFontFamily;
             }
 
+            if (s_fontFamilyCache.TryGetValue(clean, out var cached))
+            {
+                return cached;
+            }
+
             string xamlStack = clean switch
             {
                 "霞鹜文楷" or "LXGW WenKai" => "LXGW WenKai, 霞鹜文楷, Microsoft YaHei UI",
@@ -78,7 +70,9 @@ namespace Journal.Models
                 _ => $"{clean}, Microsoft YaHei UI"
             };
 
-            return new Microsoft.UI.Xaml.Media.FontFamily(xamlStack);
+            var created = new FontFamily(xamlStack);
+            s_fontFamilyCache.TryAdd(clean, created);
+            return created;
         }
 
         /// <summary>
@@ -93,7 +87,6 @@ namespace Journal.Models
                 SaveSoundTheme = this.SaveSoundTheme,
                 SoundVolume = this.SoundVolume,
                 IsHapticVibrationEnabled = this.IsHapticVibrationEnabled,
-                IsCursorPulseEnabled = this.IsCursorPulseEnabled,
                 FontFamily = this.FontFamily,
                 UiFontFamily = this.UiFontFamily,
                 FontSize = this.FontSize,

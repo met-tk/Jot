@@ -34,7 +34,6 @@ namespace Journal.Services
         public Color NavIndicatorColor { get; set; }
         public Color NavActiveBackground { get; set; }
 
-        // 和谐色调专属卡片与悬浮岛配置（彻底终结死白与突兀色块）
         public Color CardBackgroundColor { get; set; }
         public Color CardSecondaryBackgroundColor { get; set; }
         public Color CardBorderColor { get; set; }
@@ -81,34 +80,6 @@ namespace Journal.Services
                 return brush;
             }
         }
-
-        /// <summary>
-        /// 查询已注册的规范画刷 (用于测试断言、视图绑定与外部诊断)
-        /// </summary>
-        public static SolidColorBrush? GetCanonicalBrush(string key)
-        {
-            if (string.IsNullOrEmpty(key)) return null;
-            lock (_brushLock)
-            {
-                _canonicalBrushes.TryGetValue(key, out var brush);
-                return brush;
-            }
-        }
-
-        // 10+ 核心规范画刷公共属性 (供外部视图、诊断及自动化测试直调)
-        public static SolidColorBrush? CardBackgroundFillColorDefaultBrush => GetCanonicalBrush("CardBackgroundFillColorDefaultBrush");
-        public static SolidColorBrush? CardBackgroundFillColorSecondaryBrush => GetCanonicalBrush("CardBackgroundFillColorSecondaryBrush");
-        public static SolidColorBrush? CardStrokeColorDefaultBrush => GetCanonicalBrush("CardStrokeColorDefaultBrush");
-        public static SolidColorBrush? AccentFillColorDefaultBrush => GetCanonicalBrush("AccentFillColorDefaultBrush");
-        public static SolidColorBrush? AccentFillColorSecondaryBrush => GetCanonicalBrush("AccentFillColorSecondaryBrush");
-        public static SolidColorBrush? AccentFillColorTertiaryBrush => GetCanonicalBrush("AccentFillColorTertiaryBrush");
-        public static SolidColorBrush? AccentTextFillColorPrimaryBrush => GetCanonicalBrush("AccentTextFillColorPrimaryBrush");
-        public static SolidColorBrush? AppBadgeBackgroundBrush => GetCanonicalBrush("AppBadgeBackgroundBrush");
-        public static SolidColorBrush? AppBadgeBorderBrush => GetCanonicalBrush("AppBadgeBorderBrush");
-        public static SolidColorBrush? AppAccentTextBrush => GetCanonicalBrush("AppAccentTextBrush");
-        public static SolidColorBrush? SliderTrackValueFillBrush => GetCanonicalBrush("SliderTrackValueFill");
-        public static SolidColorBrush? SliderThumbFillBrush => GetCanonicalBrush("SliderThumbFill");
-        public static SolidColorBrush? ToggleSwitchFillOnBrush => GetCanonicalBrush("ToggleSwitchFillOn");
 
         // 视图专属导航与悬浮岛高光画刷属性 (统一接入规范画刷注册表)
         public static SolidColorBrush? ActiveCalendarDayBackgroundBrush => GetOrCreateCanonicalBrush("ActiveCalendarDayBackgroundBrush", CurrentPalette.CalendarActiveBackground);
@@ -246,14 +217,17 @@ namespace Journal.Services
                     }
                 }
 
-                dialog.Loaded += (s, e) =>
+                void OnDialogLoaded(object s, RoutedEventArgs e)
                 {
+                    dialog.Loaded -= OnDialogLoaded;
                     try
                     {
                         StripDialogDefaultButtonElevationBorder(dialog);
                     }
                     catch { }
-                };
+                }
+
+                dialog.Loaded += OnDialogLoaded;
             }
             catch { }
         }
@@ -280,11 +254,10 @@ namespace Journal.Services
                     if (!string.IsNullOrEmpty(targetButtonName) && string.Equals(btn.Name, targetButtonName, StringComparison.Ordinal))
                     {
                         btn.BorderThickness = new Thickness(0);
-                        btn.BorderBrush = new SolidColorBrush(Colors.Transparent);
+                        btn.BorderBrush = GetOrCreateCanonicalBrush("TransparentDialogButtonBorderBrush", Colors.Transparent);
                     }
                     else if (btn.BorderBrush is LinearGradientBrush lgb)
                     {
-                        // 针对非默认按钮（如“继续停留在软件”/“取消”），消除底部深色立体阴影渐变，统一为温和单色描边
                         foreach (var stop in lgb.GradientStops)
                         {
                             stop.Color = CurrentPalette.CardBorderColor;
@@ -296,8 +269,7 @@ namespace Journal.Services
         }
 
         /// <summary>
-        /// 就地净化 XamlControlsResources 中导致纯色按钮与弹窗主按钮底部出现黑线的 LinearGradientBrush (Elevation Border)，
-        /// 仅修改 LinearGradientBrush 的 GradientStop 透明度，绝不修改只读字典键值表。
+        /// 就地净化 XamlControlsResources 中导致纯色按钮与弹窗主按钮底部出现黑线的 LinearGradientBrush (Elevation Border)
         /// </summary>
         private static void NeutralizeSystemElevationBorders(ResourceDictionary appResources, AmbiancePalette p)
         {
@@ -312,8 +284,7 @@ namespace Journal.Services
                         NeutralizeElevationBrushesInSingleDict(merged, p);
                         if (merged.ThemeDictionaries != null)
                         {
-                            string[] themeKeys = { "Light", "Dark", "Default" };
-                            foreach (var tk in themeKeys)
+                            foreach (var tk in s_themeDictionaryKeys)
                             {
                                 if (merged.ThemeDictionaries.TryGetValue(tk, out var tdObj) && tdObj is ResourceDictionary td)
                                 {
@@ -327,19 +298,21 @@ namespace Journal.Services
             catch { }
         }
 
+        private static readonly string[] s_themeDictionaryKeys = { "Light", "Dark", "Default" };
+        private static readonly string[] s_accentBorderKeys =
+        {
+            "AccentControlElevationBorderBrush",
+            "AccentButtonBorderBrush",
+            "AccentButtonBorderBrushPointerOver",
+            "ToggleButtonBorderBrushChecked",
+            "ToggleButtonBorderBrushCheckedPointerOver"
+        };
+
         private static void NeutralizeElevationBrushesInSingleDict(ResourceDictionary dict, AmbiancePalette p)
         {
             if (dict == null) return;
-            string[] accentBorderKeys =
-            {
-                "AccentControlElevationBorderBrush",
-                "AccentButtonBorderBrush",
-                "AccentButtonBorderBrushPointerOver",
-                "ToggleButtonBorderBrushChecked",
-                "ToggleButtonBorderBrushCheckedPointerOver"
-            };
 
-            foreach (var key in accentBorderKeys)
+            foreach (var key in s_accentBorderKeys)
             {
                 try
                 {
@@ -373,14 +346,13 @@ namespace Journal.Services
             if (dict == null) return;
             try
             {
-                // 1. 注入当前字典根层 (仅限 Application.Current.Resources 或 rootElement.Resources 本身)
+                // 1. 注入当前字典根层
                 PopulateThemeResources(dict, p, isDark, backdropType);
 
-                // 2. 深度注入 ThemeDictionaries ("Light", "Dark", "Default")，彻底根治 WinUI 3 原生控件沿用系统蓝与底部黑线
-                string[] themeKeys = { "Light", "Dark", "Default" };
-                foreach (var themeKey in themeKeys)
+                // 2. 深度注入 ThemeDictionaries ("Light", "Dark", "Default")
+                foreach (var themeKey in s_themeDictionaryKeys)
                 {
-                    ResourceDictionary? targetThemeDict = null;
+                    ResourceDictionary? targetThemeDict;
                     if (dict.ThemeDictionaries.TryGetValue(themeKey, out var existingObj) && existingObj is ResourceDictionary existingDict)
                     {
                         targetThemeDict = existingDict;
@@ -391,14 +363,8 @@ namespace Journal.Services
                         dict.ThemeDictionaries[themeKey] = targetThemeDict;
                     }
 
-                    if (targetThemeDict != null)
-                    {
-                        PopulateThemeResources(targetThemeDict, p, isDark, backdropType);
-                    }
+                    PopulateThemeResources(targetThemeDict, p, isDark, backdropType);
                 }
-
-                // 【安全护栏 F1】：彻底移除对 dict.MergedDictionaries 的递归键值写入。
-                // 严禁向 XamlControlsResources 写入键值，彻底根除 0xc0000005 与 0xc000027b 崩溃源。
             }
             catch (Exception ex)
             {
@@ -441,7 +407,7 @@ namespace Journal.Services
             SetOrUpdateBrush(target, "ToggleButtonBackgroundCheckedPointerOver", p.AccentHoverColor);
             SetOrUpdateBrush(target, "ToggleButtonBackgroundCheckedPressed", p.AccentPressedColor);
 
-            // 彻底清除纯色按钮 (AccentButton / Checked ToggleButton) 底部的 WinUI 3 原生黑色立体阴影线
+            // 彻底清除纯色按钮底部的 WinUI 3 原生黑色立体阴影线
             SetOrUpdateColor(target, "ControlStrokeColorOnAccentDefault", Colors.Transparent);
             SetOrUpdateColor(target, "ControlStrokeColorOnAccentSecondary", Colors.Transparent);
             SetOrUpdateColor(target, "ControlStrokeColorOnAccentTertiary", Colors.Transparent);
@@ -473,7 +439,7 @@ namespace Journal.Services
             SetOrUpdateBrush(target, "AccentTextFillColorSecondaryBrush", p.AccentHoverColor);
             SetOrUpdateBrush(target, "AccentTextFillColorTertiaryBrush", p.AccentPressedColor);
 
-            // 强调背景上的文字前景色：纯白，确保 AccentButton 上文字高对比可读
+            // 强调背景上的文字前景色：纯白
             SetOrUpdateBrush(target, "TextOnAccentFillColorPrimaryBrush", Colors.White);
             SetOrUpdateBrush(target, "TextOnAccentFillColorSecondaryBrush", Color.FromArgb(230, 255, 255, 255));
             SetOrUpdateBrush(target, "TextOnAccentFillColorDisabledBrush", Color.FromArgb(120, 255, 255, 255));
@@ -481,7 +447,7 @@ namespace Journal.Services
             SetOrUpdateBrush(target, "AccentButtonForegroundPointerOver", Colors.White);
             SetOrUpdateBrush(target, "AccentButtonForegroundPressed", Color.FromArgb(235, 255, 255, 255));
 
-            // WinUI 3 原生控件全状态关联画刷：彻底消灭 Slider、ToggleSwitch、ComboBox、CheckBox、RadioButton 沿用旧色或系统蓝
+            // WinUI 3 原生控件全状态关联画刷
             SetOrUpdateBrush(target, "SliderTrackFill", sliderTrackUnfilled);
             SetOrUpdateBrush(target, "SliderTrackFillPointerOver", sliderTrackUnfilledHover);
             SetOrUpdateBrush(target, "SliderTrackFillPressed", sliderTrackUnfilledPressed);
@@ -539,9 +505,9 @@ namespace Journal.Services
             var normBackdrop = backdropType?.Trim().ToLowerInvariant() ?? "micaalt";
             byte cardAlpha = normBackdrop switch
             {
-                "acrylic" => 180,        // 亚克力毛玻璃：~70% 灵动通透光晕
-                "solid" or "none" => 255, // 纯色经典：100% 坚实温润纯净纸面
-                _ => 240                 // Mica / MicaAlt：~94% 典雅分层轻透
+                "acrylic" => 180,
+                "solid" or "none" => 255,
+                _ => 240
             };
 
             byte secAlpha = normBackdrop switch
@@ -565,7 +531,6 @@ namespace Journal.Services
             if (targetDict == null || string.IsNullOrEmpty(key)) return;
             try
             {
-                // 1. 获取或创建单例规范画刷
                 var canonicalBrush = GetOrCreateCanonicalBrush(key, color);
                 if (canonicalBrush == null)
                 {
@@ -573,24 +538,16 @@ namespace Journal.Services
                     return;
                 }
 
-                // 2. 就地更新单例画刷颜色 (In-place mutation)
-                // 仅当颜色变化时赋值，直接触发 WinUI 依赖属性重绘通知，零分配且零延迟
                 if (canonicalBrush.Color != color)
                 {
                     canonicalBrush.Color = color;
                 }
 
-                // 3. 将规范画刷挂载至目标资源字典 (若已存在且为同实例，直接返回，跳过字典写入)
-                // 【关键防污染红线】：严禁对 existingObj (非 canonicalBrush) 调用 existingScb.Color = color！
-                // 因为首次调用时 targetDict.TryGetValue(key, ...) 会穿透至 MergedDictionaries[0] (XamlControlsResources)，
-                // 返回系统内部由 43+ 个控件状态共享的底层画刷（如 ControlStrongFillColorDefaultBrush）。
-                // 一旦修改 existingScb.Color，会导致系统底层共享画刷被首次启动色调永久污染！
                 if (targetDict.TryGetValue(key, out var existingObj) && ReferenceEquals(existingObj, canonicalBrush))
                 {
                     return;
                 }
 
-                // 确保字典本级直接持有规范画刷引用（遮蔽 MergedDictionaries 中的系统默认键）
                 targetDict[key] = canonicalBrush;
             }
             catch (Exception ex)
@@ -615,13 +572,12 @@ namespace Journal.Services
 
         private static AmbiancePalette CreateDefaultPalette()
         {
-            // 默认 (系统原生 · 翡翠绿)：温润玉青，现代 Fluent 经典分层
-            var accent = Color.FromArgb(255, 30, 142, 106); // #1E8E6A 温润玉青
+            var accent = Color.FromArgb(255, 30, 142, 106);
             return new AmbiancePalette
             {
                 Id = "Default",
                 DisplayName = "默认 (系统原生 · 翡翠绿)",
-                ForcedDarkTheme = null, // 跟随系统主题
+                ForcedDarkTheme = null,
                 AccentColor = accent,
                 AccentHoverColor = Color.FromArgb(255, 42, 168, 126),
                 AccentPressedColor = Color.FromArgb(255, 22, 118, 88),
@@ -645,13 +601,12 @@ namespace Journal.Services
 
         private static AmbiancePalette CreateWarmPaperPalette()
         {
-            // 米黄纸色 (暖琥珀沉香)：羊脂羊皮纸，典雅焦糖琥珀暖木，温润雅致的手账质感
-            var accent = Color.FromArgb(255, 168, 98, 26); // #A8621A 沉稳优雅的暖木琥珀，拒绝刺眼高饱和
+            var accent = Color.FromArgb(255, 168, 98, 26);
             return new AmbiancePalette
             {
                 Id = "WarmPaper",
                 DisplayName = "米黄纸色 (暖琥珀沉香)",
-                ForcedDarkTheme = false, // 锁定温润浅色手账模式
+                ForcedDarkTheme = false,
                 AccentColor = accent,
                 AccentHoverColor = Color.FromArgb(255, 192, 114, 32),
                 AccentPressedColor = Color.FromArgb(255, 140, 80, 20),
@@ -660,14 +615,14 @@ namespace Journal.Services
                 CalendarActiveBackground = Color.FromArgb(28, 168, 98, 26),
                 CalendarActiveRing = Color.FromArgb(130, 168, 98, 26),
                 NavIndicatorColor = accent,
-                NavActiveBackground = Color.FromArgb(24, 168, 98, 26), // 10% 优雅微光晕胶囊
-                OverlayColorLight = Color.FromArgb(255, 254, 251, 245), // 浅浓度：象牙清透微暖白
-                OverlayColorLightDeep = Color.FromArgb(255, 242, 230, 208), // 高浓度：古法暖琥珀沉香宣纸
+                NavActiveBackground = Color.FromArgb(24, 168, 98, 26),
+                OverlayColorLight = Color.FromArgb(255, 254, 251, 245),
+                OverlayColorLightDeep = Color.FromArgb(255, 242, 230, 208),
                 OverlayColorDark = Color.FromArgb(255, 36, 32, 26),
                 OverlayColorDarkDeep = Color.FromArgb(255, 18, 16, 12),
-                CardBackgroundColor = Color.FromArgb(255, 255, 254, 250), // 专属羊脂白卡片
+                CardBackgroundColor = Color.FromArgb(255, 255, 254, 250),
                 CardSecondaryBackgroundColor = Color.FromArgb(255, 248, 243, 233),
-                CardBorderColor = Color.FromArgb(255, 230, 222, 206), // 细腻暖微金边框
+                CardBorderColor = Color.FromArgb(255, 230, 222, 206),
                 ShellIslandBackground = Color.FromArgb(255, 255, 254, 250),
                 ShellIslandBorder = Color.FromArgb(255, 230, 222, 206)
             };
@@ -675,13 +630,12 @@ namespace Journal.Services
 
         private static AmbiancePalette CreateMidnightDarkPalette()
         {
-            // 纯黑 (极夜天际冷蓝)：深邃静谧天际蓝，沉浸 OLED 炭黑
-            var accent = Color.FromArgb(255, 74, 158, 222); // #4A9EDE 静谧冰川蓝
+            var accent = Color.FromArgb(255, 74, 158, 222);
             return new AmbiancePalette
             {
                 Id = "MidnightDark",
                 DisplayName = "纯黑 (极夜天际冷蓝)",
-                ForcedDarkTheme = true, // 锁定极夜深黑模式
+                ForcedDarkTheme = true,
                 AccentColor = accent,
                 AccentHoverColor = Color.FromArgb(255, 105, 178, 235),
                 AccentPressedColor = Color.FromArgb(255, 52, 132, 194),
@@ -695,9 +649,9 @@ namespace Journal.Services
                 OverlayColorLightDeep = Color.FromArgb(255, 10, 11, 14),
                 OverlayColorDark = Color.FromArgb(255, 18, 20, 24),
                 OverlayColorDarkDeep = Color.FromArgb(255, 8, 9, 12),
-                CardBackgroundColor = Color.FromArgb(255, 26, 28, 34), // 专属炭黑卡片
+                CardBackgroundColor = Color.FromArgb(255, 26, 28, 34),
                 CardSecondaryBackgroundColor = Color.FromArgb(255, 34, 37, 44),
-                CardBorderColor = Color.FromArgb(255, 45, 50, 60), // 幽暗微描边
+                CardBorderColor = Color.FromArgb(255, 45, 50, 60),
                 ShellIslandBackground = Color.FromArgb(255, 26, 28, 34),
                 ShellIslandBorder = Color.FromArgb(255, 45, 50, 60)
             };
@@ -705,13 +659,12 @@ namespace Journal.Services
 
         private static AmbiancePalette CreateDawnMistPalette()
         {
-            // 青墨 (淡雅苍松黛青)：宣纸青墨，晨雾玉白，山岚黛青
-            var accent = Color.FromArgb(255, 30, 130, 121); // #1E8279 苍松黛青
+            var accent = Color.FromArgb(255, 30, 130, 121);
             return new AmbiancePalette
             {
                 Id = "DawnMist",
                 DisplayName = "青墨 (淡雅苍松黛青)",
-                ForcedDarkTheme = false, // 锁定浅色宣纸模式
+                ForcedDarkTheme = false,
                 AccentColor = accent,
                 AccentHoverColor = Color.FromArgb(255, 42, 155, 144),
                 AccentPressedColor = Color.FromArgb(255, 20, 105, 98),
@@ -721,13 +674,13 @@ namespace Journal.Services
                 CalendarActiveRing = Color.FromArgb(130, 30, 130, 121),
                 NavIndicatorColor = accent,
                 NavActiveBackground = Color.FromArgb(24, 30, 130, 121),
-                OverlayColorLight = Color.FromArgb(255, 248, 252, 250), // 浅浓度：晨雾润玉白
-                OverlayColorLightDeep = Color.FromArgb(255, 226, 238, 234), // 高浓度：苍松黛青玉宣纸
+                OverlayColorLight = Color.FromArgb(255, 248, 252, 250),
+                OverlayColorLightDeep = Color.FromArgb(255, 226, 238, 234),
                 OverlayColorDark = Color.FromArgb(255, 24, 30, 28),
                 OverlayColorDarkDeep = Color.FromArgb(255, 12, 16, 15),
-                CardBackgroundColor = Color.FromArgb(255, 251, 253, 252), // 微青润白卡片
+                CardBackgroundColor = Color.FromArgb(255, 251, 253, 252),
                 CardSecondaryBackgroundColor = Color.FromArgb(255, 241, 246, 244),
-                CardBorderColor = Color.FromArgb(255, 212, 226, 222), // 雅致微青边框
+                CardBorderColor = Color.FromArgb(255, 212, 226, 222),
                 ShellIslandBackground = Color.FromArgb(255, 251, 253, 252),
                 ShellIslandBorder = Color.FromArgb(255, 212, 226, 222)
             };
@@ -735,13 +688,12 @@ namespace Journal.Services
 
         private static AmbiancePalette CreateTwilightLavenderPalette()
         {
-            // 浅紫 (暮色紫罗兰)：莫兰迪暮色丁香，轻盈粉雾紫白
-            var accent = Color.FromArgb(255, 116, 89, 200); // #7459C8 莫兰迪丁香紫
+            var accent = Color.FromArgb(255, 116, 89, 200);
             return new AmbiancePalette
             {
                 Id = "TwilightLavender",
                 DisplayName = "浅紫 (暮色紫罗兰)",
-                ForcedDarkTheme = false, // 锁定浅色丁香模式
+                ForcedDarkTheme = false,
                 AccentColor = accent,
                 AccentHoverColor = Color.FromArgb(255, 138, 110, 218),
                 AccentPressedColor = Color.FromArgb(255, 96, 70, 175),
@@ -751,13 +703,13 @@ namespace Journal.Services
                 CalendarActiveRing = Color.FromArgb(130, 116, 89, 200),
                 NavIndicatorColor = accent,
                 NavActiveBackground = Color.FromArgb(24, 116, 89, 200),
-                OverlayColorLight = Color.FromArgb(255, 252, 249, 253), // 浅浓度：轻盈粉雾白
-                OverlayColorLightDeep = Color.FromArgb(255, 234, 225, 242), // 高浓度：暮色丁香雅致润紫
+                OverlayColorLight = Color.FromArgb(255, 252, 249, 253),
+                OverlayColorLightDeep = Color.FromArgb(255, 234, 225, 242),
                 OverlayColorDark = Color.FromArgb(255, 30, 26, 36),
                 OverlayColorDarkDeep = Color.FromArgb(255, 15, 12, 18),
-                CardBackgroundColor = Color.FromArgb(255, 253, 251, 254), // 丁香润白卡片
+                CardBackgroundColor = Color.FromArgb(255, 253, 251, 254),
                 CardSecondaryBackgroundColor = Color.FromArgb(255, 245, 240, 248),
-                CardBorderColor = Color.FromArgb(255, 224, 214, 232), // 浅紫微柔边框
+                CardBorderColor = Color.FromArgb(255, 224, 214, 232),
                 ShellIslandBackground = Color.FromArgb(255, 253, 251, 254),
                 ShellIslandBorder = Color.FromArgb(255, 224, 214, 232)
             };
@@ -765,13 +717,12 @@ namespace Journal.Services
 
         private static AmbiancePalette CreateClassicSepiaPalette()
         {
-            // 复古暖褐 (古籍焦糖)：羊皮古籍，焦糖栗木，温润醇厚古卷
-            var accent = Color.FromArgb(255, 138, 86, 28); // #8A561C 醇厚古籍深栗木
+            var accent = Color.FromArgb(255, 138, 86, 28);
             return new AmbiancePalette
             {
                 Id = "ClassicSepia",
                 DisplayName = "复古暖褐 (古籍焦糖)",
-                ForcedDarkTheme = false, // 锁定古籍暖色模式
+                ForcedDarkTheme = false,
                 AccentColor = accent,
                 AccentHoverColor = Color.FromArgb(255, 165, 105, 36),
                 AccentPressedColor = Color.FromArgb(255, 112, 68, 20),
@@ -781,13 +732,13 @@ namespace Journal.Services
                 CalendarActiveRing = Color.FromArgb(130, 138, 86, 28),
                 NavIndicatorColor = accent,
                 NavActiveBackground = Color.FromArgb(24, 138, 86, 28),
-                OverlayColorLight = Color.FromArgb(255, 252, 248, 240), // 浅浓度：清透羊皮微白
-                OverlayColorLightDeep = Color.FromArgb(255, 236, 224, 204), // 高浓度：浓郁古卷焦糖栗木宣纸
+                OverlayColorLight = Color.FromArgb(255, 252, 248, 240),
+                OverlayColorLightDeep = Color.FromArgb(255, 236, 224, 204),
                 OverlayColorDark = Color.FromArgb(255, 34, 28, 22),
                 OverlayColorDarkDeep = Color.FromArgb(255, 16, 13, 10),
-                CardBackgroundColor = Color.FromArgb(255, 251, 247, 240), // 专属古卷白卡片
+                CardBackgroundColor = Color.FromArgb(255, 251, 247, 240),
                 CardSecondaryBackgroundColor = Color.FromArgb(255, 242, 235, 222),
-                CardBorderColor = Color.FromArgb(255, 223, 210, 191), // 典雅米褐边框
+                CardBorderColor = Color.FromArgb(255, 223, 210, 191),
                 ShellIslandBackground = Color.FromArgb(255, 251, 247, 240),
                 ShellIslandBorder = Color.FromArgb(255, 223, 210, 191)
             };

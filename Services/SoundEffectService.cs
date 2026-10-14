@@ -8,7 +8,7 @@ namespace Journal.Services
 {
     /// <summary>
     /// 超低延迟、零 GC 拟物物理音效服务：
-    /// 基于 WinMM PlaySound 与内存预调音 PCM 缓冲区，达成单次微秒级（~3.5 µs）极速响应；
+    /// 基于 WinMM PlaySound 与内存预调音 PCM 缓冲区，达成单次微秒级极速响应；
     /// 支持双轨并发混音（普通击键与换行铜铃余音互不打断）。
     /// </summary>
     public sealed class SoundEffectService : ISoundEffectService, IDisposable
@@ -23,7 +23,7 @@ namespace Journal.Services
         private const uint SND_NODEFAULT = 0x0002;
         private const uint SND_MEMORY = 0x0004;
 
-        // WaveOut API P/Invoke (用于回车长铃专属二级音频轨道，实现双轨硬件混音)
+        // WaveOut API P/Invoke (用于回车长铃与手动保存音效二级音频轨道，实现双轨硬件混音)
         [DllImport("winmm.dll")]
         private static extern int waveOutOpen(out IntPtr hWaveOut, uint uDeviceID, ref WAVEFORMATEX lpFormat, IntPtr dwCallback, IntPtr dwInstance, uint fdwOpen);
 
@@ -71,8 +71,7 @@ namespace Journal.Services
 
         /// <summary>
         /// WaveOut 异步音频缓冲区上下文：
-        /// 严格保证非托管 WAVEHDR 结构体（堆内存）与固定 PCM 数组句柄（GCHandle）的成对完整生命周期管理，
-        /// 彻底杜绝连击与并发场景下的非托管内存与驱动句柄泄漏。
+        /// 严格保证非托管 WAVEHDR 结构体与固定 PCM 数组句柄（GCHandle）的成对完整生命周期管理
         /// </summary>
         private sealed class WaveOutBufferContext : IDisposable
         {
@@ -172,13 +171,13 @@ namespace Journal.Services
         public string CurrentSaveTheme { get; private set; } = "TypewriterBell";
         public double Volume { get; private set; } = 0.8;
 
-        private readonly Dictionary<string, byte[]> _rawAudioTemplates = new();
-        private readonly Dictionary<string, byte[]> _scaledAudioCache = new();
+        private readonly Dictionary<string, byte[]> _rawAudioTemplates = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, byte[]> _scaledAudioCache = new(StringComparer.Ordinal);
         private readonly Random _random = new();
         private readonly object _lock = new();
-        private long _lastPlayTicks = 0;
-        private long _lastEnterPlayTicks = 0;
-        private long _lastSavePlayTicks = 0;
+        private long _lastPlayTicks;
+        private long _lastEnterPlayTicks;
+        private long _lastSavePlayTicks;
 
         // Fisher-Yates 防连续重复洗牌袋（Shuffle Bag）状态
         private readonly List<int> _clickShuffleBag = new(PcmAudioSynthesizer.ClickVariantCount);
@@ -188,15 +187,15 @@ namespace Journal.Services
 
         // 二级回车与保存长铃句柄及安全生命周期跟踪池
         private IntPtr _hWaveOut = IntPtr.Zero;
-        private bool _isBellWaveOutActive = false;
+        private bool _isBellWaveOutActive;
         private readonly List<WaveOutBufferContext> _activeBellBuffers = new();
         private readonly object _waveOutLock = new();
 
         public SoundEffectService()
         {
-            LoadThemeTemplates(CurrentTheme);
-            LoadSaveTemplate(CurrentSaveTheme);
-            RefreshScaledCache();
+            LoadThemeTemplatesLocked(CurrentTheme, refreshScaled: false);
+            LoadSaveTemplateLocked(CurrentSaveTheme, refreshScaled: false);
+            RefreshScaledCacheLocked();
             InitWaveOutSecondaryTrack();
         }
 
@@ -226,7 +225,7 @@ namespace Journal.Services
         }
 
         /// <summary>
-        /// 从指定洗牌袋中抽取下一个不与上一次重复的变体索引（线程安全调用需在 _lock 内）
+        /// 从指定洗牌袋中抽取下一个不与上一次重复的变体索引（调用方需持有 _lock）
         /// </summary>
         private int NextNonRepeatingIndexLocked(List<int> bag, ref int lastIndex, int count)
         {
@@ -261,20 +260,7 @@ namespace Journal.Services
         }
 
         /// <summary>
-        /// 供内部与自动化测试调用的防重复变体抽取器
-        /// </summary>
-        public int NextClickVariantIndex(bool isSpecialKey = false)
-        {
-            lock (_lock)
-            {
-                return isSpecialKey
-                    ? NextNonRepeatingIndexLocked(_specialShuffleBag, ref _lastSpecialIndex, PcmAudioSynthesizer.SpecialVariantCount)
-                    : NextNonRepeatingIndexLocked(_clickShuffleBag, ref _lastClickIndex, PcmAudioSynthesizer.ClickVariantCount);
-            }
-        }
-
-        /// <summary>
-        /// 极速播放按键敲击音效（单次耗时约 3.5 微秒，零线程切换开销，支持 10 变体防连续重复随机洗牌）
+        /// 极速播放按键敲击音效（支持 10 变体防连续重复随机洗牌）
         /// </summary>
         public void PlayKeyClick(bool isSpecialKey = false)
         {
@@ -282,8 +268,8 @@ namespace Journal.Services
 
             // 20ms 连击与长按按键防爆破节流保护
             long now = DateTime.UtcNow.Ticks;
-            if (now - _lastPlayTicks < 200_000) return;
-            _lastPlayTicks = now;
+            if (now - Interlocked.Read(ref _lastPlayTicks) < 200_000) return;
+            Interlocked.Exchange(ref _lastPlayTicks, now);
 
             byte[]? pcmBytes;
             lock (_lock)
@@ -335,11 +321,10 @@ namespace Journal.Services
         {
             if (!IsEnabled || Volume <= 0.001) return;
 
-            // 35ms 回车防重入节流保护，并同步更新常规击键时间戳防止同一击键瞬态双轨齐鸣
             long now = DateTime.UtcNow.Ticks;
-            if (now - _lastEnterPlayTicks < 350_000) return;
-            _lastEnterPlayTicks = now;
-            _lastPlayTicks = now;
+            if (now - Interlocked.Read(ref _lastEnterPlayTicks) < 350_000) return;
+            Interlocked.Exchange(ref _lastEnterPlayTicks, now);
+            Interlocked.Exchange(ref _lastPlayTicks, now);
 
             byte[]? enterBytes;
             lock (_lock)
@@ -363,10 +348,9 @@ namespace Journal.Services
                 return;
             }
 
-            // 80ms 手动保存防连击节流
             long now = DateTime.UtcNow.Ticks;
-            if (now - _lastSavePlayTicks < 800_000) return;
-            _lastSavePlayTicks = now;
+            if (now - Interlocked.Read(ref _lastSavePlayTicks) < 800_000) return;
+            Interlocked.Exchange(ref _lastSavePlayTicks, now);
 
             byte[]? saveBytes;
             lock (_lock)
@@ -380,19 +364,15 @@ namespace Journal.Services
 
         private void PlayOnSecondaryWaveOutTrack(byte[] wavBytes, int cleanupDelayMs)
         {
-            // 若支持 WaveOut 二级独立轨道，则向 WaveOut 投递，实现真正的多音混音；否则回退为 PlaySound
             if (_isBellWaveOutActive && _hWaveOut != IntPtr.Zero && wavBytes.Length > 44)
             {
                 try
                 {
-                    // 仅提取 44 字节 WAV 头部之后的 PCM 裸数据
                     byte[] pcmPayload = new byte[wavBytes.Length - 44];
                     Buffer.BlockCopy(wavBytes, 44, pcmPayload, 0, pcmPayload.Length);
 
-                    // 根据实际 44.1kHz 16-bit 单声道 PCM 字节长度（88.2 bytes/ms）动态计算完整播放时长，防止长延音被提前回收
                     int dynamicDelayMs = Math.Max(cleanupDelayMs, (int)Math.Ceiling(pcmPayload.Length / 88.2) + 350);
 
-                    // 异步在线程池中处理缓冲区固定与排队，避免阻塞当前主调用
                     ThreadPool.QueueUserWorkItem(_ =>
                     {
                         try
@@ -405,10 +385,8 @@ namespace Journal.Services
                                     return;
                                 }
 
-                                // 1. 回收所有已经播放完成的旧缓冲区（100% 释放 GCHandle、WAVEHDR 及非托管句柄）
                                 CleanupCompletedBellBuffersLocked();
 
-                                // 2. 若仍有未播放完的前序余音，立即重置二级轨道并清空旧缓冲区，避免单句柄 FIFO 串行排队导致延迟响两次
                                 if (_activeBellBuffers.Count > 0)
                                 {
                                     waveOutReset(_hWaveOut);
@@ -428,7 +406,6 @@ namespace Journal.Services
                                 }
                             }
 
-                            // 3. 计划在音频完整播放完毕后触发延迟回收
                             Timer? cleanupTimer = null;
                             cleanupTimer = new Timer(_ =>
                             {
@@ -458,37 +435,49 @@ namespace Journal.Services
                 }
             }
 
-            // 基础单轨降级
             PlaySound(wavBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
         }
 
         public void SetTheme(string theme)
         {
             if (string.IsNullOrWhiteSpace(theme)) theme = "Typewriter";
-            if (CurrentTheme == theme && _rawAudioTemplates.ContainsKey("click_0")) return;
+            lock (_lock)
+            {
+                if (string.Equals(CurrentTheme, theme, StringComparison.Ordinal) && _rawAudioTemplates.ContainsKey("click_0"))
+                {
+                    return;
+                }
 
-            CurrentTheme = theme;
-            LoadThemeTemplates(theme);
-            RefreshScaledCache();
+                CurrentTheme = theme;
+                LoadThemeTemplatesLocked(theme, refreshScaled: true);
+            }
         }
 
         public void SetSaveTheme(string saveTheme)
         {
             if (string.IsNullOrWhiteSpace(saveTheme)) saveTheme = "TypewriterBell";
-            if (CurrentSaveTheme == saveTheme && (_rawAudioTemplates.ContainsKey("save") || string.Equals(saveTheme, "None", StringComparison.OrdinalIgnoreCase)))
-                return;
+            lock (_lock)
+            {
+                if (string.Equals(CurrentSaveTheme, saveTheme, StringComparison.Ordinal) &&
+                    (_rawAudioTemplates.ContainsKey("save") || string.Equals(saveTheme, "None", StringComparison.OrdinalIgnoreCase)))
+                {
+                    return;
+                }
 
-            CurrentSaveTheme = saveTheme;
-            LoadSaveTemplate(saveTheme);
-            RefreshScaledCache();
+                CurrentSaveTheme = saveTheme;
+                LoadSaveTemplateLocked(saveTheme, refreshScaled: true);
+            }
         }
 
         public void SetVolume(double volume)
         {
             double clamped = Math.Clamp(volume, 0.0, 1.0);
-            if (Math.Abs(Volume - clamped) < 0.0001 && _scaledAudioCache.Count > 0) return;
-            Volume = clamped;
-            RefreshScaledCache();
+            lock (_lock)
+            {
+                if (Math.Abs(Volume - clamped) < 0.0001 && _scaledAudioCache.Count > 0) return;
+                Volume = clamped;
+                RefreshScaledCacheLocked();
+            }
         }
 
         public void SetEnabled(bool enabled)
@@ -512,70 +501,80 @@ namespace Journal.Services
             return candidate;
         }
 
-        private void LoadThemeTemplates(string theme)
+        private static readonly int[] s_clickVariantCodes = { 0, 1, 2, 5, 6, 7, 8, 9, 10, 11 };
+
+        private void LoadThemeTemplatesLocked(string theme, bool refreshScaled)
         {
-            lock (_lock)
+            _clickShuffleBag.Clear();
+            _specialShuffleBag.Clear();
+            _lastClickIndex = -1;
+            _lastSpecialIndex = -1;
+
+            string themeDir = ResolveAudioDirectory(theme);
+            double gain = Volume * Volume;
+
+            for (int i = 0; i < PcmAudioSynthesizer.ClickVariantCount; i++)
             {
-                _clickShuffleBag.Clear();
-                _specialShuffleBag.Clear();
-                _lastClickIndex = -1;
-                _lastSpecialIndex = -1;
-
-                string themeDir = ResolveAudioDirectory(theme);
-
-                // 加载 10 个普通击键变体 (click1.wav ~ click10.wav)
-                int[] clickVariantCodes = { 0, 1, 2, 5, 6, 7, 8, 9, 10, 11 };
-                for (int i = 0; i < PcmAudioSynthesizer.ClickVariantCount; i++)
-                {
-                    string fileName = $"click{i + 1}.wav";
-                    _rawAudioTemplates[$"click_{i}"] = LoadOrSynthesize(themeDir, fileName, theme, clickVariantCodes[i]);
-                }
-
-                // 加载 3 个特殊大键变体 (special.wav, special2.wav, special3.wav)
-                _rawAudioTemplates["special"]   = LoadOrSynthesize(themeDir, "special.wav",  theme, 3);
-                _rawAudioTemplates["special_1"] = LoadOrSynthesize(themeDir, "special2.wav", theme, 12);
-                _rawAudioTemplates["special_2"] = LoadOrSynthesize(themeDir, "special3.wav", theme, 13);
-
-                // 加载回车键音效
-                _rawAudioTemplates["enter"] = LoadOrSynthesize(themeDir, "enter.wav", theme, 4);
+                string key = $"click_{i}";
+                string fileName = $"click{i + 1}.wav";
+                byte[] raw = LoadOrSynthesize(themeDir, fileName, theme, s_clickVariantCodes[i]);
+                _rawAudioTemplates[key] = raw;
+                if (refreshScaled) UpdateSingleScaledBufferLocked(key, raw, gain);
             }
+
+            string[] specialKeys = { "special", "special_1", "special_2" };
+            string[] specialFiles = { "special.wav", "special2.wav", "special3.wav" };
+            int[] specialCodes = { 3, 12, 13 };
+            for (int i = 0; i < specialKeys.Length; i++)
+            {
+                byte[] raw = LoadOrSynthesize(themeDir, specialFiles[i], theme, specialCodes[i]);
+                _rawAudioTemplates[specialKeys[i]] = raw;
+                if (refreshScaled) UpdateSingleScaledBufferLocked(specialKeys[i], raw, gain);
+            }
+
+            byte[] enterRaw = LoadOrSynthesize(themeDir, "enter.wav", theme, 4);
+            _rawAudioTemplates["enter"] = enterRaw;
+            if (refreshScaled) UpdateSingleScaledBufferLocked("enter", enterRaw, gain);
         }
 
-        private void LoadSaveTemplate(string saveTheme)
+        private void LoadSaveTemplateLocked(string saveTheme, bool refreshScaled)
         {
-            lock (_lock)
+            if (string.IsNullOrWhiteSpace(saveTheme) || string.Equals(saveTheme, "None", StringComparison.OrdinalIgnoreCase))
             {
-                if (string.IsNullOrWhiteSpace(saveTheme) || string.Equals(saveTheme, "None", StringComparison.OrdinalIgnoreCase))
-                {
-                    _rawAudioTemplates.Remove("save");
-                    return;
-                }
+                _rawAudioTemplates.Remove("save");
+                _scaledAudioCache.Remove("save");
+                return;
+            }
 
-                string saveDir = ResolveAudioDirectory("Save");
-                string fullPath = Path.Combine(saveDir, $"{saveTheme}.wav");
-                if (File.Exists(fullPath))
+            byte[]? resolvedData = null;
+            string saveDir = ResolveAudioDirectory("Save");
+            string fullPath = Path.Combine(saveDir, $"{saveTheme}.wav");
+            if (File.Exists(fullPath))
+            {
+                try
                 {
-                    try
+                    byte[] data = File.ReadAllBytes(fullPath);
+                    if (data.Length > 44)
                     {
-                        byte[] data = File.ReadAllBytes(fullPath);
-                        if (data.Length > 44)
-                        {
-                            _rawAudioTemplates["save"] = data;
-                            return;
-                        }
+                        resolvedData = data;
                     }
-                    catch { }
                 }
+                catch { }
+            }
 
-                byte[] fallback = PcmAudioSynthesizer.GenerateSaveSound(saveTheme);
-                if (fallback.Length > 44)
+            resolvedData ??= PcmAudioSynthesizer.GenerateSaveSound(saveTheme);
+            if (resolvedData.Length > 44)
+            {
+                _rawAudioTemplates["save"] = resolvedData;
+                if (refreshScaled)
                 {
-                    _rawAudioTemplates["save"] = fallback;
+                    UpdateSingleScaledBufferLocked("save", resolvedData, Volume * Volume);
                 }
-                else
-                {
-                    _rawAudioTemplates.Remove("save");
-                }
+            }
+            else
+            {
+                _rawAudioTemplates.Remove("save");
+                _scaledAudioCache.Remove("save");
             }
         }
 
@@ -595,18 +594,22 @@ namespace Journal.Services
             return PcmAudioSynthesizer.Generate(theme, variant);
         }
 
-        private void RefreshScaledCache()
+        private void UpdateSingleScaledBufferLocked(string key, byte[] rawBytes, double gain)
         {
-            // 人耳听觉感知平方衰减曲线 (G = Volume ^ 2)
-            double gain = Volume * Volume;
-
-            lock (_lock)
+            _scaledAudioCache.TryGetValue(key, out byte[]? existingBuffer);
+            PcmAudioSynthesizer.ApplyVolumeInto(rawBytes, gain, ref existingBuffer);
+            if (existingBuffer != null)
             {
-                _scaledAudioCache.Clear();
-                foreach (var kvp in _rawAudioTemplates)
-                {
-                    _scaledAudioCache[kvp.Key] = PcmAudioSynthesizer.ApplyVolume(kvp.Value, gain);
-                }
+                _scaledAudioCache[key] = existingBuffer;
+            }
+        }
+
+        private void RefreshScaledCacheLocked()
+        {
+            double gain = Volume * Volume;
+            foreach (var kvp in _rawAudioTemplates)
+            {
+                UpdateSingleScaledBufferLocked(kvp.Key, kvp.Value, gain);
             }
         }
 

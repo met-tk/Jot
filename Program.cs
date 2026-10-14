@@ -2,7 +2,6 @@ using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
-using Journal.Services;
 
 namespace Journal
 {
@@ -35,27 +34,28 @@ namespace Journal
         [STAThread]
         public static void Main(string[] args)
         {
-            // 1. 自动化质量验证与测试套件豁免单实例拦截
-            if (args.Length > 0 && (args[0] == "--verify-m4" || args[0] == "--test"))
-            {
-                int exitCode = M4VerificationRunner.RunAllTests();
-                Environment.Exit(exitCode);
-                return;
-            }
-
-            // 2. 具名互斥体单实例保护 (Scoped to Local User Session)
-            bool createdNew = false;
+            // 具名互斥体单实例保护 (Scoped to Local User Session)，妥善接管上次异常退出遗留的 AbandonedMutex
+            bool ownsMutex = false;
             try
             {
-                s_appMutex = new Mutex(true, SingleInstanceMutexName, out createdNew);
+                s_appMutex = new Mutex(initiallyOwned: false, SingleInstanceMutexName);
+                try
+                {
+                    ownsMutex = s_appMutex.WaitOne(0, exitContext: false);
+                }
+                catch (AbandonedMutexException)
+                {
+                    // 前序实例异常崩溃未释放互斥体，当前实例安全接管所有权
+                    ownsMutex = true;
+                }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[Program] Mutex acquire error: {ex.Message}");
-                createdNew = true;
+                Debug.WriteLine($"[Program] Mutex acquire error: {ex.Message}");
+                ownsMutex = false;
             }
 
-            if (!createdNew)
+            if (!ownsMutex)
             {
                 // 探测到已有实例正在运行：将已有实例的主窗口平滑还原并置于最前台，随后极速退出当前新进程
                 ActivateExistingWindow();
@@ -72,6 +72,7 @@ namespace Journal
                 }
                 catch { }
 
+                s_appMutex?.Dispose();
                 Environment.Exit(0);
                 return;
             }
@@ -90,7 +91,7 @@ namespace Journal
                 {
                     var context = new global::Microsoft.UI.Dispatching.DispatcherQueueSynchronizationContext(
                         global::Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
-                    global::System.Threading.SynchronizationContext.SetSynchronizationContext(context);
+                    SynchronizationContext.SetSynchronizationContext(context);
                     new App();
                 });
             }
@@ -98,7 +99,10 @@ namespace Journal
             {
                 try
                 {
-                    s_appMutex?.ReleaseMutex();
+                    if (ownsMutex)
+                    {
+                        s_appMutex?.ReleaseMutex();
+                    }
                     s_appMutex?.Dispose();
                 }
                 catch { }
@@ -113,6 +117,8 @@ namespace Journal
             try
             {
                 int currentPid = Environment.ProcessId;
+                using var currentProc = Process.GetCurrentProcess();
+                string currentProcName = currentProc.ProcessName;
 
                 // 1. 优先通过窗口标题精确查找已有主窗口 HWND，并严格校验属于本软件同名进程
                 IntPtr hWnd = FindWindow(null, "Jot");
@@ -124,7 +130,7 @@ namespace Journal
                         try
                         {
                             using var targetProc = Process.GetProcessById((int)windowPid);
-                            if (string.Equals(targetProc.ProcessName, Process.GetCurrentProcess().ProcessName, StringComparison.OrdinalIgnoreCase))
+                            if (string.Equals(targetProc.ProcessName, currentProcName, StringComparison.OrdinalIgnoreCase))
                             {
                                 BringWindowToForeground(hWnd);
                                 return;
@@ -134,9 +140,8 @@ namespace Journal
                     }
                 }
 
-                // 2. 备用兜底：安全枚举所有名为 Jot 的已有进程的主窗口句柄
-                var currentProc = Process.GetCurrentProcess();
-                var processes = Process.GetProcessesByName(currentProc.ProcessName);
+                // 2. 备用兜底：安全枚举所有同名已有进程的主窗口句柄
+                var processes = Process.GetProcessesByName(currentProcName);
                 foreach (var proc in processes)
                 {
                     using (proc)
@@ -155,7 +160,7 @@ namespace Journal
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[Program] ActivateExistingWindow exception: {ex.Message}");
+                Debug.WriteLine($"[Program] ActivateExistingWindow exception: {ex.Message}");
             }
         }
 

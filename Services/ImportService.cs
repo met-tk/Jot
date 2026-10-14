@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -21,6 +22,9 @@ namespace Journal.Services
     {
         private static ImportService? _instance;
         public static ImportService Instance => _instance ??= new ImportService();
+
+        private const int MaxSingleFileSizeBytes = 20 * 1024 * 1024; // 20MB 单文件安全上限
+        private const long MaxTotalZipSizeBytes = 100L * 1024 * 1024; // 100MB 累计解包上限
 
         #region 正则解析器预编译
 
@@ -153,7 +157,6 @@ namespace Journal.Services
             result = default;
             if (string.IsNullOrWhiteSpace(input)) return false;
 
-            // 尝试标准分隔符
             var matchStd = RegexStandardDate.Match(input);
             if (matchStd.Success)
             {
@@ -167,7 +170,6 @@ namespace Journal.Services
                 }
             }
 
-            // 尝试紧凑型 8 位数字 (如 20261009)
             var matchCompact = RegexCompactDate.Match(input);
             if (matchCompact.Success)
             {
@@ -181,7 +183,6 @@ namespace Journal.Services
                 }
             }
 
-            // 尝试直接解析
             if (DateTime.TryParse(input, CultureInfo.CurrentCulture, DateTimeStyles.None, out var dtDirect) && IsReasonableYear(dtDirect.Year))
             {
                 result = dtDirect.Date;
@@ -217,7 +218,6 @@ namespace Journal.Services
 
         /// <summary>
         /// 将指定文件路径集合（支持 .md, .txt, .json, .zip）加载至内存原始文本池中
-        /// 支持切换切分规则时瞬间在内存中重新计算，免去重复 I/O 开销
         /// </summary>
         public async Task<List<RawImportSource>> LoadRawSourcesAsync(IEnumerable<string> filePaths, List<string>? warnings = null)
         {
@@ -248,30 +248,29 @@ namespace Journal.Services
                                 continue;
                             }
 
-                            // 防御超大文件 / Zip 炸弹（限制单文件解包上限 20MB，累计 100MB）
-                            if (entry.Length > 20 * 1024 * 1024)
+                            if (entry.Length > MaxSingleFileSizeBytes)
                             {
                                 warnings?.Add($"跳过超大条目 [{entryName}]: 尺寸超过 20MB");
                                 continue;
                             }
 
-                            if (totalUncompressedBytes > 100 * 1024 * 1024)
+                            if (totalUncompressedBytes > MaxTotalZipSizeBytes)
                             {
-                                warnings?.Add($"ZIP 累计解包尺寸已达 100MB 安全上限，停止解压后续条目");
+                                warnings?.Add("ZIP 累计解包尺寸已达 100MB 安全上限，停止解压后续条目");
                                 break;
                             }
 
                             string subExt = Path.GetExtension(entryName).ToLowerInvariant();
-                            if (subExt == ".md" || subExt == ".txt" || subExt == ".markdown" || subExt == ".json")
+                            if (subExt is ".md" or ".txt" or ".markdown" or ".json")
                             {
                                 using var stream = entry.Open();
-                                string? raw = await ReadStreamBoundedAsync(stream, 20 * 1024 * 1024);
+                                var (raw, byteLen) = await ReadStreamBoundedAsync(stream, MaxSingleFileSizeBytes);
                                 if (raw == null)
                                 {
                                     warnings?.Add($"跳过异常膨胀条目 [{entryName}]: 实际解压尺寸超出 20MB");
                                     continue;
                                 }
-                                totalUncompressedBytes += Encoding.UTF8.GetByteCount(raw);
+                                totalUncompressedBytes += byteLen;
 
                                 if (!string.IsNullOrWhiteSpace(raw))
                                 {
@@ -286,16 +285,22 @@ namespace Journal.Services
                             }
                         }
                     }
-                    else if (ext == ".md" || ext == ".txt" || ext == ".markdown" || ext == ".json")
+                    else if (ext is ".md" or ".txt" or ".markdown" or ".json")
                     {
                         var fi = new FileInfo(path);
-                        string raw = await File.ReadAllTextAsync(path, Encoding.UTF8);
+                        if (fi.Length > MaxSingleFileSizeBytes)
+                        {
+                            warnings?.Add($"跳过超大文件 [{fi.Name}]: 尺寸超过 20MB");
+                            continue;
+                        }
+
+                        string raw = await DiaryStorageService.ReadFileTextSharedAsync(path);
                         if (!string.IsNullOrWhiteSpace(raw))
                         {
                             sources.Add(new RawImportSource
                             {
                                 FilePath = path,
-                                FileName = Path.GetFileName(path),
+                                FileName = fi.Name,
                                 RawContent = raw,
                                 FileTime = fi.LastWriteTime
                             });
@@ -317,7 +322,6 @@ namespace Journal.Services
 
         /// <summary>
         /// 基于自定义规则解析与切片单篇文本内容
-        /// 严格区分“跨日日期标记”与“单日内 [HH:mm:ss] 纯时间戳”，纯时分秒 100% 保持在当天正文中
         /// </summary>
         public static List<(DateTime Date, string Content, string SourceDesc)> SegmentTextWithRule(
             string rawContent,
@@ -348,7 +352,7 @@ namespace Journal.Services
             {
                 try
                 {
-                    // 设置 500ms 严格超时与 RegexOptions.None，根除病态正则导致 ReDoS 挂起 UI 线程隐患
+                    // 设置 500ms 严格超时，根除病态正则导致 ReDoS 挂起 UI 线程隐患
                     customRegex = new Regex(rule.CustomRegexPattern, RegexOptions.None, TimeSpan.FromMilliseconds(500));
                 }
                 catch
@@ -362,7 +366,7 @@ namespace Journal.Services
                 string line = lines[i];
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
-                // 严防死守：纯时分秒 [HH:mm:ss] 绝不触发跨日切分，100% 保持在日记正文内
+                // 纯时分秒 [HH:mm:ss] 绝不触发跨日切分，100% 保持在日记正文内
                 if (RegexPureTimeOfDay.IsMatch(line)) continue;
 
                 bool matched = false;
@@ -450,7 +454,6 @@ namespace Journal.Services
             {
                 var (dt, _, desc) = Instance.ExtractDate(fileName, rawContent, fileTime);
                 string cleaned = content.Trim();
-                // 若首行即为纯日期 Markdown 标题行（如 # 2026-10-09），自动剥离该标题锚点行以保证正文 100% 纯净无损
                 if (anchors.Count == 1 && anchors[0].LineIndex == 0 && lines.Length > 1 && RegexHeaderDateLine.IsMatch(lines[0]))
                 {
                     string bodyWithoutHeader = string.Join("\n", lines.Skip(1)).Trim();
@@ -480,7 +483,7 @@ namespace Journal.Services
                     int startLine = cur.LineIndex + 1;
                     int endLine = (i + 1 < anchors.Count) ? anchors[i + 1].LineIndex : lines.Length;
 
-                    var blockLines = new List<string>();
+                    var blockLines = new List<string>(endLine - startLine + 1);
                     if (!string.IsNullOrEmpty(cur.TimestampTag))
                     {
                         blockLines.Add(cur.TimestampTag);
@@ -514,7 +517,7 @@ namespace Journal.Services
                     int startLine = cur.LineIndex + 1;
                     int endLine = (i + 1 < anchors.Count) ? anchors[i + 1].LineIndex : lines.Length;
 
-                    var blockLines = new List<string>();
+                    var blockLines = new List<string>(endLine - startLine + 1);
                     if (!string.IsNullOrEmpty(cur.TimestampTag))
                     {
                         blockLines.Add(cur.TimestampTag);
@@ -531,8 +534,8 @@ namespace Journal.Services
                 }
             }
 
-            return segments.Count > 0 
-                ? segments 
+            return segments.Count > 0
+                ? segments
                 : new() { (Instance.ExtractDate(fileName, rawContent, fileTime).Date, content.Trim(), "单篇导入") };
         }
 
@@ -574,8 +577,7 @@ namespace Journal.Services
                 {
                     try
                     {
-                        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(src.RawContent));
-                        await ParseJsonStreamAsync(stream, src.FileName, distinctEntries, summary.Warnings);
+                        ParseJsonContent(src.RawContent, src.FileName, distinctEntries);
                     }
                     catch (Exception ex)
                     {
@@ -638,8 +640,6 @@ namespace Journal.Services
             normalizedTimestampTag = string.Empty;
 
             if (string.IsNullOrWhiteSpace(line)) return false;
-
-            // 严防死守：纯时分秒 [HH:mm:ss] 绝不触发跨日切分，100% 保持在日记正文内
             if (RegexPureTimeOfDay.IsMatch(line)) return false;
 
             return TryExtractAnchorMatch(RegexBracketDateTimeLine.Match(line), out date, out normalizedTimestampTag) ||
@@ -648,26 +648,14 @@ namespace Journal.Services
                    TryExtractAnchorMatch(RegexStandaloneDateLine.Match(line), out date, out normalizedTimestampTag);
         }
 
-        /// <summary>
-        /// 单文本文件多日日记智能切片与格式化拆分引擎（向后兼容）
-        /// </summary>
-        public static List<(DateTime Date, string Content, string SourceDesc)>? SegmentMultiDayText(
-            string rawContent,
-            string fileName)
-        {
-            var list = SegmentTextWithRule(rawContent, fileName, new CustomSplitRule { Preset = ImportSplitRulePreset.AutoDetection });
-            return (list != null && list.Count > 1) ? list : null;
-        }
-
         private static readonly string[] s_jsonContainerPropertyNames = { "entries", "journals", "data", "items", "diaries" };
 
-        private async Task ParseJsonStreamAsync(
-            Stream stream,
+        private void ParseJsonContent(
+            string jsonContent,
             string fileName,
-            Dictionary<DateTime, ImportedEntryPreview> entries,
-            List<string> warnings)
+            Dictionary<DateTime, ImportedEntryPreview> entries)
         {
-            using var doc = await JsonDocument.ParseAsync(stream);
+            using var doc = JsonDocument.Parse(jsonContent);
             var root = doc.RootElement;
 
             if (root.ValueKind == JsonValueKind.Array)
@@ -679,7 +667,6 @@ namespace Journal.Services
             }
             else if (root.ValueKind == JsonValueKind.Object)
             {
-                // 检查包装属性 entries / journals / data
                 bool foundArray = false;
                 foreach (var propName in s_jsonContainerPropertyNames)
                 {
@@ -696,7 +683,6 @@ namespace Journal.Services
 
                 if (!foundArray)
                 {
-                    // 尝试将当前单对象解析为一篇日记
                     ParseJsonEntryElement(root, fileName, entries);
                 }
             }
@@ -761,22 +747,34 @@ namespace Journal.Services
             return null;
         }
 
-        private static async Task<string?> ReadStreamBoundedAsync(Stream stream, int maxBytes = 20 * 1024 * 1024)
+        private static async Task<(string? Text, int ByteLength)> ReadStreamBoundedAsync(Stream stream, int maxBytes = MaxSingleFileSizeBytes)
         {
             using var ms = new MemoryStream();
-            byte[] buffer = new byte[65536];
-            int totalRead = 0;
-            int bytesRead;
-            while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(65536);
+            try
             {
-                totalRead += bytesRead;
-                if (totalRead > maxBytes)
+                int totalRead = 0;
+                int bytesRead;
+                while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
                 {
-                    return null; // 超出单文件解压安全上限
+                    totalRead += bytesRead;
+                    if (totalRead > maxBytes)
+                    {
+                        return (null, totalRead);
+                    }
+                    ms.Write(buffer, 0, bytesRead);
                 }
-                ms.Write(buffer, 0, bytesRead);
+
+                if (ms.TryGetBuffer(out ArraySegment<byte> seg) && seg.Array != null)
+                {
+                    return (Encoding.UTF8.GetString(seg.Array, seg.Offset, seg.Count), totalRead);
+                }
+                return (Encoding.UTF8.GetString(ms.ToArray()), totalRead);
             }
-            return Encoding.UTF8.GetString(ms.ToArray());
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
         }
 
         private static void AddOrMergeParsedEntry(
@@ -786,7 +784,6 @@ namespace Journal.Services
             var date = newEntry.TargetDate.Date;
             if (dict.TryGetValue(date, out var existing))
             {
-                // 同一批文件中出现同日期日记，在内存中先行合并追加
                 if (!existing.Content.Contains(newEntry.Content, StringComparison.Ordinal))
                 {
                     existing.Content = existing.Content.TrimEnd() + "\n\n" + newEntry.Content.TrimStart();
@@ -874,7 +871,7 @@ namespace Journal.Services
                 return result;
             }
 
-            var savedItems = new List<(DateTime Date, string Content, string FullPath)>();
+            var savedItems = new List<(DateTime Date, string Content, string FullPath)>(total);
 
             for (int i = 0; i < total; i++)
             {
@@ -916,6 +913,11 @@ namespace Journal.Services
                     savedItems.Add((entry.TargetDate, finalContent, standardPath));
                     result.TotalWordsAdded += entry.WordCount;
                     entry.IsImported = true;
+                    entry.HasConflict = true;
+                    entry.ExistingContent = finalContent;
+                    entry.ExistingWordCount = DiaryStorageService.Instance.CalculateWordCount(finalContent);
+                    entry.ExistingTimestampsCount = DiaryStorageService.Instance.CountTimestamps(finalContent);
+                    entry.SimulatedMergedContent = finalContent;
                 }
                 catch (Exception ex)
                 {
@@ -927,7 +929,7 @@ namespace Journal.Services
                 }
             }
 
-            // 批量提交索引与通知界面
+            // 批量提交索引与通知界面（SyncDiariesBatchAsync 内部自动触发单次 NotifyDataChanged）
             if (savedItems.Count > 0)
             {
                 progress?.Report((total, total, "正在同步本地数据库索引..."));
@@ -940,7 +942,6 @@ namespace Journal.Services
 
         /// <summary>
         /// 针对单条识别日记条目立即执行直接导入
-        /// 写入文件、同步索引并更新条目状态为已入库
         /// </summary>
         public async Task<bool> ExecuteImportSingleAsync(
             ImportedEntryPreview entry,
@@ -979,7 +980,6 @@ namespace Journal.Services
                 entry.ExistingTimestampsCount = DiaryStorageService.Instance.CountTimestamps(finalContent);
                 entry.SimulatedMergedContent = finalContent;
 
-                DiaryIndexService.Instance.NotifyDataChanged();
                 return true;
             }
             catch (Exception ex)

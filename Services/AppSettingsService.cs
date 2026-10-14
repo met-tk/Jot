@@ -12,7 +12,7 @@ namespace Journal.Services
     /// <summary>
     /// 全局应用设置持久化服务：原子落盘、300ms防抖、内存即时分发
     /// </summary>
-    public class AppSettingsService : IAppSettingsService
+    public sealed class AppSettingsService : IAppSettingsService
     {
         private static AppSettingsService? _instance;
         public static AppSettingsService Instance => _instance ??= new AppSettingsService();
@@ -26,9 +26,10 @@ namespace Journal.Services
 
         private readonly string _settingsPath;
         private readonly SemaphoreSlim _fileLock = new(1, 1);
-        private readonly object _timerLock = new();
+        private readonly object _stateLock = new();
         private Timer? _debounceTimer;
         private AppSettings _currentSettings = new();
+        private bool _isDisposed;
 
         public AppSettings CurrentSettings => _currentSettings;
         public event EventHandler<AppSettings>? SettingsChanged;
@@ -61,23 +62,32 @@ namespace Journal.Services
             {
                 try
                 {
-                    string json = await File.ReadAllTextAsync(_settingsPath, Encoding.UTF8);
+                    string json = await DiaryStorageService.ReadFileTextSharedAsync(_settingsPath);
                     var loaded = JsonSerializer.Deserialize<AppSettings>(json, s_jsonOptions);
                     if (loaded != null)
                     {
-                        _currentSettings = loaded;
+                        lock (_stateLock)
+                        {
+                            _currentSettings = loaded;
+                        }
                     }
                 }
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"[AppSettings] Load failed, falling back to default: {ex.Message}");
-                    _currentSettings = new AppSettings();
+                    lock (_stateLock)
+                    {
+                        _currentSettings = new AppSettings();
+                    }
                     await SaveAsync();
                 }
             }
             else
             {
-                _currentSettings = new AppSettings();
+                lock (_stateLock)
+                {
+                    _currentSettings = new AppSettings();
+                }
                 await SaveAsync();
             }
 
@@ -87,15 +97,14 @@ namespace Journal.Services
 
         public void Update(Action<AppSettings> updateAction)
         {
-            if (updateAction == null) return;
-            updateAction(_currentSettings);
+            if (updateAction == null || _isDisposed) return;
 
-            // 1. 0ms 内存极速广播
-            SettingsChanged?.Invoke(this, _currentSettings);
-
-            // 2. 300ms 磁盘防抖写入
-            lock (_timerLock)
+            AppSettings snapshot;
+            lock (_stateLock)
             {
+                updateAction(_currentSettings);
+                snapshot = _currentSettings;
+
                 if (_debounceTimer == null)
                 {
                     _debounceTimer = new Timer(_ => _ = SaveAsync(), null, 300, Timeout.Infinite);
@@ -105,15 +114,26 @@ namespace Journal.Services
                     _debounceTimer.Change(300, Timeout.Infinite);
                 }
             }
+
+            // 0ms 内存极速广播
+            SettingsChanged?.Invoke(this, snapshot);
         }
 
         public async Task SaveAsync()
         {
+            if (_isDisposed) return;
+
+            AppSettings snapshot;
+            lock (_stateLock)
+            {
+                snapshot = _currentSettings.Clone();
+            }
+
             await _fileLock.WaitAsync();
+            string tempPath = $"{_settingsPath}.{Guid.NewGuid():N}.tmp";
             try
             {
-                string json = JsonSerializer.Serialize(_currentSettings, s_jsonOptions);
-                string tempPath = _settingsPath + ".tmp";
+                string json = JsonSerializer.Serialize(snapshot, s_jsonOptions);
                 await File.WriteAllTextAsync(tempPath, json, Encoding.UTF8);
                 File.Move(tempPath, _settingsPath, overwrite: true);
             }
@@ -123,7 +143,26 @@ namespace Journal.Services
             }
             finally
             {
+                try
+                {
+                    if (File.Exists(tempPath))
+                    {
+                        File.Delete(tempPath);
+                    }
+                }
+                catch { }
                 _fileLock.Release();
+            }
+        }
+
+        public void Dispose()
+        {
+            lock (_stateLock)
+            {
+                if (_isDisposed) return;
+                _isDisposed = true;
+                _debounceTimer?.Dispose();
+                _debounceTimer = null;
             }
         }
     }

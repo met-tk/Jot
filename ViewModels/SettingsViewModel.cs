@@ -26,8 +26,8 @@ namespace Journal.ViewModels
     {
         private readonly IAppSettingsService _settingsService;
         private readonly ISoundEffectService _soundService;
-        private bool _isUpdatingFromModel = false;
-        private bool _isSavingLocally = false;
+        private bool _isUpdatingFromModel;
+        private bool _isSavingLocally;
 
         public List<SelectionOptionItem> AvailableSoundThemeOptions { get; } = new()
         {
@@ -87,9 +87,6 @@ namespace Journal.ViewModels
         private bool _isHapticVibrationEnabled;
 
         [ObservableProperty]
-        private bool _isCursorPulseEnabled;
-
-        [ObservableProperty]
         private string _selectedFontFamily = "Segoe UI Variable Text";
 
         [ObservableProperty]
@@ -114,7 +111,7 @@ namespace Journal.ViewModels
         private string _storageDirectoryPath = string.Empty;
 
         [ObservableProperty]
-        private string _appVersionText = "Jot v1.2.0";
+        private string _appVersionText = "Jot v1.2.1";
 
         [ObservableProperty]
         private string _samplePreviewText = "天地者万物之逆旅也，光阴者百代之过客也。";
@@ -179,7 +176,6 @@ namespace Journal.ViewModels
                 SoundVolumePercent = Math.Round(s.SoundVolume * 100.0, 0);
 
                 IsHapticVibrationEnabled = s.IsHapticVibrationEnabled;
-                IsCursorPulseEnabled = s.IsCursorPulseEnabled;
 
                 SelectedFontFamily = s.FontFamily;
                 SelectedUiFontFamily = string.IsNullOrWhiteSpace(s.UiFontFamily) ? "Segoe UI Variable Text" : s.UiFontFamily;
@@ -212,8 +208,8 @@ namespace Journal.ViewModels
             _isSavingLocally = true;
             try
             {
-                _settingsService.Update(s => s.IsSoundEnabled = value);
                 _soundService.SetEnabled(value);
+                _settingsService.Update(s => s.IsSoundEnabled = value);
             }
             finally
             {
@@ -227,8 +223,8 @@ namespace Journal.ViewModels
             _isSavingLocally = true;
             try
             {
-                _settingsService.Update(s => s.SoundTheme = value);
                 _soundService.SetTheme(value);
+                _settingsService.Update(s => s.SoundTheme = value);
                 _soundService.PlayKeyClick();
             }
             finally
@@ -243,8 +239,8 @@ namespace Journal.ViewModels
             _isSavingLocally = true;
             try
             {
-                _settingsService.Update(s => s.SaveSoundTheme = value);
                 _soundService.SetSaveTheme(value);
+                _settingsService.Update(s => s.SaveSoundTheme = value);
                 _soundService.PlaySaveSound();
             }
             finally
@@ -260,8 +256,8 @@ namespace Journal.ViewModels
             try
             {
                 double normalized = Math.Clamp(value / 100.0, 0.0, 1.0);
-                _settingsService.Update(s => s.SoundVolume = normalized);
                 _soundService.SetVolume(normalized);
+                _settingsService.Update(s => s.SoundVolume = normalized);
             }
             finally
             {
@@ -276,20 +272,6 @@ namespace Journal.ViewModels
             try
             {
                 _settingsService.Update(s => s.IsHapticVibrationEnabled = value);
-            }
-            finally
-            {
-                _isSavingLocally = false;
-            }
-        }
-
-        partial void OnIsCursorPulseEnabledChanged(bool value)
-        {
-            if (_isUpdatingFromModel || _isSavingLocally) return;
-            _isSavingLocally = true;
-            try
-            {
-                _settingsService.Update(s => s.IsCursorPulseEnabled = value);
             }
             finally
             {

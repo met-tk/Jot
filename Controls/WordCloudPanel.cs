@@ -35,6 +35,9 @@ namespace Journal.Controls
         private SpiralLayoutResult? _cachedLayout;
         private double _cachedMaxWidth = -1;
 
+        private static readonly double s_cosStep = Math.Cos(0.32);
+        private static readonly double s_sinStep = Math.Sin(0.32);
+
         private static void OnSpacingChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             if (d is WordCloudPanel panel)
@@ -126,7 +129,7 @@ namespace Journal.Controls
 
         private SpiralLayoutResult ComputeSpiralLayout(double maxWidth)
         {
-            var visibleChildren = new List<(UIElement Element, Size Desired, int Index)>();
+            var visibleChildren = new List<(UIElement Element, Size Desired, int Index)>(Children.Count);
             int idx = 0;
             foreach (UIElement child in Children)
             {
@@ -161,7 +164,6 @@ namespace Journal.Controls
             double hGap = Math.Max(1.0, HorizontalSpacing);
             double vGap = Math.Max(1.0, VerticalSpacing);
 
-            // 扁椭圆长短轴比例：横向自然舒展，纵向紧凑收敛
             const double aspectX = 1.72;
             const double aspectY = 0.62;
             const double goldenAngle = 2.39996322972865332; // 137.50776° 黄金分割角
@@ -176,11 +178,12 @@ namespace Journal.Controls
                 var (elem, desired, _) = visibleChildren[i];
                 double w = Math.Max(1.0, desired.Width);
                 double h = Math.Max(1.0, desired.Height);
+                double halfW = w * 0.5;
+                double halfH = h * 0.5;
 
                 if (i == 0)
                 {
-                    // 第 0 号最大核心词锚定在螺旋中心偏左上微调位，营造视觉主焦点
-                    var firstRect = new Rect(-w / 2.0, -h / 2.0, w, h);
+                    var firstRect = new Rect(-halfW, -halfH, w, h);
                     placedRects.Add(firstRect);
                     placements.Add((elem, firstRect));
                     minX = firstRect.Left;
@@ -190,8 +193,9 @@ namespace Journal.Controls
                     continue;
                 }
 
-                // 每个词以黄金分割角递增作为初始发射角，配合微小的奇偶高低错位，彻底打破水平行感
                 double startTheta = i * goldenAngle;
+                double cosTheta = Math.Cos(startTheta);
+                double sinTheta = Math.Sin(startTheta);
                 double verticalJitter = ((i % 3) - 1) * 3.5;
 
                 Rect chosenRect = default;
@@ -199,17 +203,24 @@ namespace Journal.Controls
 
                 for (int step = 0; step < 1600; step++)
                 {
-                    double theta = startTheta + step * 0.32;
                     double radius = 2.0 + step * 0.95;
 
-                    double cx = radius * Math.Cos(theta) * aspectX;
-                    double cy = radius * Math.Sin(theta) * aspectY + verticalJitter;
+                    double cx = radius * cosTheta * aspectX;
+                    double cy = radius * sinTheta * aspectY + verticalJitter;
 
-                    var candidate = new Rect(cx - w / 2.0, cy - h / 2.0, w, h);
+                    // 三角函数和差化积递推（消除内层循环每步 Math.Cos / Math.Sin 超越函数调用开销）
+                    double nextCos = cosTheta * s_cosStep - sinTheta * s_sinStep;
+                    double nextSin = sinTheta * s_cosStep + cosTheta * s_sinStep;
+                    cosTheta = nextCos;
+                    sinTheta = nextSin;
 
-                    // 限制横向总跨度不超过容器可用宽度（留出安全容差，仅当步数很大时放宽兜底）
-                    double newMinX = Math.Min(minX, candidate.Left);
-                    double newMaxX = Math.Max(maxX, candidate.Right);
+                    double candLeft = cx - halfW;
+                    double candTop = cy - halfH;
+                    double candRight = candLeft + w;
+                    double candBottom = candTop + h;
+
+                    double newMinX = Math.Min(minX, candLeft);
+                    double newMaxX = Math.Max(maxX, candRight);
                     if (step < 1100 && (newMaxX - newMinX) > maxWidth && w < maxWidth)
                     {
                         continue;
@@ -220,10 +231,10 @@ namespace Journal.Controls
                     for (int j = 0; j < placedRects.Count; j++)
                     {
                         var existing = placedRects[j];
-                        if (candidate.Left < existing.Right + hGap &&
-                            candidate.Right + hGap > existing.Left &&
-                            candidate.Top < existing.Bottom + vGap &&
-                            candidate.Bottom + vGap > existing.Top)
+                        if (candLeft < existing.Right + hGap &&
+                            candRight + hGap > existing.Left &&
+                            candTop < existing.Bottom + vGap &&
+                            candBottom + vGap > existing.Top)
                         {
                             collides = true;
                             break;
@@ -232,7 +243,7 @@ namespace Journal.Controls
 
                     if (!collides)
                     {
-                        chosenRect = candidate;
+                        chosenRect = new Rect(candLeft, candTop, w, h);
                         found = true;
                         break;
                     }
@@ -240,8 +251,7 @@ namespace Journal.Controls
 
                 if (!found)
                 {
-                    // 极端窄屏兜底：紧贴当前底部居中放置
-                    chosenRect = new Rect(-w / 2.0, maxY + vGap, w, h);
+                    chosenRect = new Rect(-halfW, maxY + vGap, w, h);
                 }
 
                 placedRects.Add(chosenRect);

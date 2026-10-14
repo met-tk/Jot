@@ -14,7 +14,9 @@ namespace Journal.ViewModels
 
         private readonly DiaryStorageService _storage = DiaryStorageService.Instance;
         private readonly DiaryIndexService _index = DiaryIndexService.Instance;
+        private readonly object _timerLock = new();
         private Timer? _autoSaveTimer;
+
         [ObservableProperty]
         private bool _isLoading = false;
 
@@ -95,22 +97,33 @@ namespace Journal.ViewModels
 
             SaveStatusText = "编辑中...";
 
-            // 防抖：停止打字 1.2 秒后计算字数并自动持久化（仅当有实质内容时）
-            _autoSaveTimer?.Dispose();
-            _autoSaveTimer = new Timer(_ =>
+            // 防抖：复用单个 Timer 实例，停止打字 1.2 秒后自动持久化（消除每次击键分配新 Timer 的开销）
+            lock (_timerLock)
             {
-                if (_dispatcher != null)
+                if (_autoSaveTimer == null)
                 {
-                    _dispatcher.TryEnqueue(async () =>
-                    {
-                        await SaveCurrentAsync();
-                    });
+                    _autoSaveTimer = new Timer(OnAutoSaveTimerCallback, null, 1200, Timeout.Infinite);
                 }
                 else
                 {
-                    _ = SaveCurrentAsync();
+                    _autoSaveTimer.Change(1200, Timeout.Infinite);
                 }
-            }, null, 1200, Timeout.Infinite);
+            }
+        }
+
+        private void OnAutoSaveTimerCallback(object? state)
+        {
+            if (_dispatcher != null)
+            {
+                _dispatcher.TryEnqueue(async () =>
+                {
+                    await SaveCurrentAsync();
+                });
+            }
+            else
+            {
+                _ = SaveCurrentAsync();
+            }
         }
 
         partial void OnIsAutoSaveEnabledChanged(bool value)
@@ -122,14 +135,35 @@ namespace Journal.ViewModels
             }
             else if (!value && HasUnsavedChanges)
             {
+                StopAutoSaveTimer();
                 SaveStatusText = "未保存";
+            }
+        }
+
+        private void StopAutoSaveTimer()
+        {
+            lock (_timerLock)
+            {
+                _autoSaveTimer?.Change(Timeout.Infinite, Timeout.Infinite);
             }
         }
 
         public void DisposeAutoSaveTimer()
         {
-            _autoSaveTimer?.Dispose();
-            _autoSaveTimer = null;
+            lock (_timerLock)
+            {
+                _autoSaveTimer?.Dispose();
+                _autoSaveTimer = null;
+            }
+        }
+
+        /// <summary>
+        /// 显式放弃未保存草稿（用于退出时选择“不保存退出”防止 Unloaded 事件二次触发自动保存）
+        /// </summary>
+        public void DiscardUnsavedChanges()
+        {
+            DisposeAutoSaveTimer();
+            HasUnsavedChanges = false;
         }
 
         private readonly SemaphoreSlim _saveLock = new(1, 1);
@@ -137,35 +171,24 @@ namespace Journal.ViewModels
         [RelayCommand]
         public async Task SaveCurrentAsync()
         {
-            DisposeAutoSaveTimer();
+            StopAutoSaveTimer();
             if (IsLoading) return;
 
             await _saveLock.WaitAsync();
             try
             {
-                // 核心安全守卫：检查是否有实质性正文（剥离时间戳标签后的纯文字）
                 string raw = DiaryContent ?? string.Empty;
-                string cleaned = s_bracketTagRegex.Replace(raw, " ").Trim();
-                int wordCount = _storage.CalculateWordCount(raw);
-                bool hasSubstantiveContent = wordCount > 0 || !string.IsNullOrWhiteSpace(cleaned);
+                string cleaned = (raw.Contains('[') ? s_bracketTagRegex.Replace(raw, " ") : raw).Trim();
+                bool hasSubstantiveContent = WordCount > 0 || !string.IsNullOrWhiteSpace(cleaned);
 
                 if (!hasSubstantiveContent)
                 {
-                    // 消费级数据安全铁律：编辑器永不自动物理删除磁盘已有文件！
-                    // 任何删除操作必须由用户在列表/日历中显式点击“删除此篇日记”并二次确认。
-                    if (_storage.DiaryExists(CurrentDate))
-                    {
-                        SaveStatusText = "已保留原内容";
-                    }
-                    else
-                    {
-                        SaveStatusText = "未记录";
-                    }
+                    // 编辑器永不自动物理删除磁盘已有文件
+                    SaveStatusText = _storage.DiaryExists(CurrentDate) ? "已保留原内容" : "未记录";
                     HasUnsavedChanges = false;
                     return;
                 }
 
-                // 仅当包含实质内容时，落盘并建立 SQLite 索引
                 await _storage.SaveDiaryContentAsync(CurrentDate, raw);
                 string path = _storage.GetDiaryPath(CurrentDate);
                 await _index.SyncDiaryAsync(CurrentDate, raw, path);
@@ -185,9 +208,7 @@ namespace Journal.ViewModels
         }
 
         /// <summary>
-        /// 智能插入时间戳：
-        /// 若当日文本中尚无时间戳，插入包含完整年月日的标记 [yyyy-MM-dd HH:mm:ss]；
-        /// 若已有时间戳，则精简插入 [HH:mm:ss]
+        /// 智能插入时间戳：当天首个附带年月日，后续仅保留时分秒
         /// </summary>
         [RelayCommand]
         public void InsertTimestamp()
@@ -195,7 +216,6 @@ namespace Journal.ViewModels
             bool hasTimestamps = _storage.HasExistingTimestamp(DiaryContent);
             string ts = _storage.GenerateTimestamp(!hasTimestamps);
 
-            // 追加带格式换行
             string toInsert;
             if (string.IsNullOrWhiteSpace(DiaryContent))
             {
