@@ -22,6 +22,11 @@
                 Opacity="0.0"
                 IsHitTestVisible="False" />
 
+        <!-- 岁月沉淀：全软件全局纸张底色老化宿主层 (占满整个软件区域，穿透交互) -->
+        <Border x:Name="GlobalPaperAgingHost"
+                Grid.RowSpan="2"
+                IsHitTestVisible="False" />
+
         <!-- 自定义一体化标题栏拖拽区域 (AppTitleBar Drag Region) -->
         <Grid x:Name="AppTitleBar"
               Height="44"

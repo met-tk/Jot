@@ -1,12 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Numerics;
 using System.Threading.Tasks;
+using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Effects;
+using Microsoft.UI.Composition;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Windows.System;
 using Windows.UI.Core;
@@ -25,6 +30,20 @@ namespace Journal.Views
         private Microsoft.UI.Composition.Compositor? _compositor;
         private Microsoft.UI.Composition.Vector3KeyFrameAnimation? _normalRecoilAnim;
         private Microsoft.UI.Composition.Vector3KeyFrameAnimation? _enterRecoilAnim;
+
+        // 字迹遮罩直接采样 RichEditBox 的实际像素，避免第二套文字排版。
+        private InkWeatheringRenderer? _inkRenderer;
+        private string? _currentInkTexturePath;
+        private ScrollViewer? _editorInnerScrollViewer;
+        private double _lastInkAgingIntensity = -1.0;
+        private Windows.UI.Color? _lastAppliedInkColor;
+        private int _inkUpdateVersion;
+        private int _dateLoadVersion;
+        private readonly SolidColorBrush? _nativeSelectionHighlightColor;
+        private readonly SolidColorBrush? _nativeSelectionHighlightColorWhenNotFocused;
+        private readonly SolidColorBrush _editorInkBrush;
+        private SolidColorBrush? _agedSelectionHighlightColor;
+        private bool _isUsingAgedSelectionHighlight;
 
         // 文本模型双向同步防重入标志
         private bool _isUpdatingEditorFromModel = false;
@@ -63,14 +82,24 @@ namespace Journal.Views
         {
             this.InitializeComponent();
             this.NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
+            _nativeSelectionHighlightColor = ContentEditorBox.SelectionHighlightColor;
+            _nativeSelectionHighlightColorWhenNotFocused = ContentEditorBox.SelectionHighlightColorWhenNotFocused;
+            _editorInkBrush = (SolidColorBrush)ContentEditorBox.Resources["TextControlForeground"];
+            ContentEditorBox.Resources["TextControlForegroundPointerOver"] = _editorInkBrush;
+            ContentEditorBox.Resources["TextControlForegroundFocused"] = _editorInkBrush;
+            ContentEditorBox.Foreground = _editorInkBrush;
 
             // 1. 初始化字纸微震动动画
             InitializePlatenVibration();
+
+            // 纸纹由 MainWindow 负责，字迹由编辑器自身的图像负责。
+            InitializeInkWeatheringVisual();
 
             // 2. 挂载编辑器底层键盘事件与内容同步
             this.AddHandler(UIElement.PreviewKeyDownEvent, new KeyEventHandler(OnPagePreviewKeyDown), true);
             ContentEditorBox.TextChanged += ContentEditorBox_TextChanged;
             ContentEditorBox.SelectionChanged += ContentEditorBox_SelectionChanged;
+            ContentEditorBox.Loaded += (s, e) => AttachEditorScrollViewer();
             ContentEditorBox.LostFocus += (s, e) =>
             {
                 _isComposing = false;
@@ -117,10 +146,25 @@ namespace Journal.Views
             {
                 if (e.PropertyName == nameof(ViewModel.DiaryContent))
                 {
-                    if (!_isUpdatingModelFromEditor)
+                    if (!_isUpdatingModelFromEditor && !ViewModel.IsLoading)
                     {
                         SetEditorText(ViewModel.DiaryContent);
                     }
+                }
+                else if (e.PropertyName == nameof(ViewModel.CurrentDate))
+                {
+                    if (!ViewModel.IsLoading)
+                    {
+                        AgingEngineService.Instance.SetCurrentViewingDate(ViewModel.CurrentDate);
+                        UpdateInkWeatheringVisual();
+                    }
+                }
+                else if (e.PropertyName == nameof(ViewModel.IsLoading) && !ViewModel.IsLoading)
+                {
+                    // Commit the paper and ink date after the matching diary content arrives.
+                    SetEditorText(ViewModel.DiaryContent);
+                    AgingEngineService.Instance.SetCurrentViewingDate(ViewModel.CurrentDate);
+                    UpdateInkWeatheringVisual();
                 }
             };
 
@@ -129,7 +173,13 @@ namespace Journal.Views
             {
                 AppSettingsService.Instance.SettingsChanged -= OnSettingsChanged;
                 AppSettingsService.Instance.SettingsChanged += OnSettingsChanged;
+                AmbianceThemeEngine.AmbiancePaletteChanged -= OnAmbiancePaletteChanged;
+                AmbianceThemeEngine.AmbiancePaletteChanged += OnAmbiancePaletteChanged;
+                this.ActualThemeChanged -= OnActualThemeChanged;
+                this.ActualThemeChanged += OnActualThemeChanged;
                 ApplyTypography(AppSettingsService.Instance.CurrentSettings);
+                AttachEditorScrollViewer();
+                UpdateInkWeatheringVisual(forceTextureReload: false);
 
                 // 页面挂载完成校验：若 RichEditBox 呈现空文档而 ViewModel.DiaryContent 有实际内容，安全重新对齐刷写
                 if (!string.IsNullOrEmpty(ViewModel.DiaryContent))
@@ -146,7 +196,11 @@ namespace Journal.Views
             {
                 try
                 {
+                    _inkUpdateVersion++;
+                    DetachEditorScrollViewer();
                     AppSettingsService.Instance.SettingsChanged -= OnSettingsChanged;
+                    AmbianceThemeEngine.AmbiancePaletteChanged -= OnAmbiancePaletteChanged;
+                    this.ActualThemeChanged -= OnActualThemeChanged;
                     ViewModel.DisposeAutoSaveTimer();
                     if (!ViewModel.IsLoading && ViewModel.HasUnsavedChanges)
                     {
@@ -171,7 +225,9 @@ namespace Journal.Views
             if (ViewModel.CurrentDate.Date == targetDate.Date && 
                 (!string.IsNullOrEmpty(ViewModel.DiaryContent) || ViewModel.HasUnsavedChanges))
             {
+                AgingEngineService.Instance.SetCurrentViewingDate(targetDate);
                 ApplyTypography(AppSettingsService.Instance.CurrentSettings);
+                await UpdateInkWeatheringVisualAsync();
                 ContentEditorBox.Focus(FocusState.Programmatic);
                 return;
             }
@@ -188,6 +244,8 @@ namespace Journal.Views
 
         public async Task LoadDateExplicitlyAsync(DateTime targetDate)
         {
+            int version = ++_dateLoadVersion;
+
             // 若之前在编辑其他日期且有未保存更改，先持久化旧日期
             if (ViewModel.CurrentDate.Date != targetDate.Date && ViewModel.HasUnsavedChanges)
             {
@@ -196,8 +254,36 @@ namespace Journal.Views
                 await ViewModel.SaveCurrentAsync();
             }
 
+            if (version != _dateLoadVersion) return;
+            var settings = AppSettingsService.Instance.CurrentSettings;
+            if (AgingEngineService.Instance.CalculateAgingIntensity(
+                    targetDate, settings.AgingInkIntensity, settings.IsAgingEnabled) > 0.0001)
+            {
+                // Prepare the texture and compositor before the new document is shown.
+                // The currently visible diary keeps its exact rendering while this runs.
+                if (!IsLoaded)
+                {
+                    var loaded = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    RoutedEventHandler? onLoaded = null;
+                    onLoaded = (s, e) =>
+                    {
+                        Loaded -= onLoaded;
+                        loaded.TrySetResult(true);
+                    };
+                    Loaded += onLoaded;
+                    await loaded.Task;
+                }
+                if (version != _dateLoadVersion) return;
+                // A settings/theme refresh can supersede an in-flight compositor
+                // update. Recheck the prepared brush before publishing old text.
+                for (int attempt = 0; attempt < 3 && !IsInkTexturePrepared(); attempt++)
+                {
+                    await UpdateInkWeatheringVisualAsync(preloadOnly: true);
+                    if (version != _dateLoadVersion) return;
+                }
+            }
+            if (version != _dateLoadVersion) return;
             await ViewModel.LoadDateAsync(targetDate);
-            SetEditorText(ViewModel.DiaryContent);
         }
 
         protected override void OnNavigatingFrom(NavigatingCancelEventArgs e)
@@ -218,16 +304,15 @@ namespace Journal.Views
 
         private void OnSettingsChanged(object? sender, AppSettings settings)
         {
-            if (string.Equals(_lastTypographyFont, settings.FontFamily, StringComparison.Ordinal) &&
-                Math.Abs(_lastTypographySize - settings.FontSize) < 0.01 &&
-                Math.Abs(_lastTypographySpacing - settings.LineSpacing) < 0.005)
-            {
-                return;
-            }
-
             this.DispatcherQueue.TryEnqueue(() =>
             {
-                ApplyTypography(settings);
+                if (!string.Equals(_lastTypographyFont, settings.FontFamily, StringComparison.Ordinal) ||
+                    Math.Abs(_lastTypographySize - settings.FontSize) >= 0.01 ||
+                    Math.Abs(_lastTypographySpacing - settings.LineSpacing) >= 0.005)
+                {
+                    ApplyTypography(settings);
+                }
+                UpdateInkWeatheringVisual(forceTextureReload: false);
             });
         }
 
@@ -298,15 +383,24 @@ namespace Journal.Views
                 _lastTypographySize = settings.FontSize;
                 _lastTypographySpacing = settings.LineSpacing;
 
+                var family = AppSettings.BuildXamlFontFamily(settings.FontFamily);
+
                 // 1. 仅当字体或字号确实改变时更新控件属性，避免无效布局重排
                 if (fontOrSizeChanged)
                 {
-                    ContentEditorBox.FontFamily = AppSettings.BuildXamlFontFamily(settings.FontFamily);
+                    ContentEditorBox.FontFamily = family;
                     ContentEditorBox.FontSize = settings.FontSize;
                 }
 
-                // 2. 动态应用多倍行距到 RichEdit 文档模型
-                ApplyDocumentLineSpacingOnly(settings.LineSpacing);
+                // 统一精准行高计算（像素与磅）：
+                // 在中文字体（如思源宋体、微软雅黑）中，自然行高约为字号的 1.35 倍
+                // 当 settings.LineSpacing = 1.2 时，实际单行垂直间隙 = FontSize * LineSpacing * 1.35
+                double lineSpacingMultiplier = Math.Clamp(settings.LineSpacing, 1.2, 2.2);
+                double exactLineHeightPx = Math.Round(settings.FontSize * lineSpacingMultiplier * 1.35, 1);
+                float exactLineHeightPt = (float)(exactLineHeightPx * 0.75); // 1 pt = 4/3 px
+
+                // 编辑器独占排版；纹理跟随其已排好的字形，不再猜测行高。
+                ApplyDocumentLineSpacingOnly(exactLineHeightPt);
             }
             catch (Exception ex)
             {
@@ -314,19 +408,23 @@ namespace Journal.Views
             }
         }
 
-        private void ApplyDocumentLineSpacingOnly(double lineSpacing)
+        private void ApplyDocumentLineSpacingOnly(float exactLineHeightPt)
         {
             try
             {
                 var doc = ContentEditorBox.Document;
-                float lineSpacingMultiple = (float)Math.Clamp(lineSpacing, 1.2, 2.2);
+                if (doc == null) return;
 
                 var defaultFormat = doc.GetDefaultParagraphFormat();
-                defaultFormat.SetLineSpacing(LineSpacingRule.Multiple, lineSpacingMultiple);
+                defaultFormat.SpaceBefore = 0;
+                defaultFormat.SpaceAfter = 0;
+                defaultFormat.SetLineSpacing(LineSpacingRule.Exactly, exactLineHeightPt);
                 doc.SetDefaultParagraphFormat(defaultFormat);
 
                 var wholeStory = doc.GetRange(0, int.MaxValue);
-                wholeStory.ParagraphFormat.SetLineSpacing(LineSpacingRule.Multiple, lineSpacingMultiple);
+                wholeStory.ParagraphFormat.SpaceBefore = 0;
+                wholeStory.ParagraphFormat.SpaceAfter = 0;
+                wholeStory.ParagraphFormat.SetLineSpacing(LineSpacingRule.Exactly, exactLineHeightPt);
             }
             catch { }
         }
@@ -462,8 +560,9 @@ namespace Journal.Views
             if (_isUpdatingEditorFromModel || _isPerformingUndoRedo || _isComposing || ViewModel.IsLoading)
                 return;
 
-            string cleanText = GetCleanEditorText();
-            if (string.Equals(cleanText, _currentConfirmedSnapshot.Text, StringComparison.Ordinal))
+            // Cursor movement is frequent in long diaries; use the text already
+            // recorded by TextChanged instead of reading the entire document.
+            if (ContentEditorBox.Document != null)
             {
                 int selStart = Math.Max(0, ContentEditorBox.Document.Selection.StartPosition);
                 int selLen = Math.Abs(ContentEditorBox.Document.Selection.Length);
@@ -471,7 +570,7 @@ namespace Journal.Views
                 {
                     _canCoalesceCurrentBurst = false;
                 }
-                _currentConfirmedSnapshot = new EditorHistorySnapshot(cleanText, selStart, selLen);
+                _currentConfirmedSnapshot = new EditorHistorySnapshot(_currentConfirmedSnapshot.Text, selStart, selLen);
             }
         }
 
@@ -635,7 +734,9 @@ namespace Journal.Views
             try
             {
                 ContentEditorBox.Document.SetText(TextSetOptions.None, snapshot.Text);
-                ApplyDocumentLineSpacingOnly(AppSettingsService.Instance.CurrentSettings.LineSpacing);
+                ApplyTypography(AppSettingsService.Instance.CurrentSettings);
+                _lastAppliedInkColor = null;
+                ApplyAgedInkColorToDocument(_lastInkAgingIntensity, IsDarkModeEffective());
 
                 string actualText = GetCleanEditorText();
                 int maxPos = actualText.Length;
@@ -668,6 +769,13 @@ namespace Journal.Views
                 string safeContent = content ?? string.Empty;
                 ContentEditorBox.Document.SetText(TextSetOptions.None, safeContent);
                 ApplyTypography(AppSettingsService.Instance.CurrentSettings);
+                _lastAppliedInkColor = null;
+                var agingSettings = AppSettingsService.Instance.CurrentSettings;
+                _lastInkAgingIntensity = AgingEngineService.Instance.CalculateAgingIntensity(
+                    ViewModel.CurrentDate, agingSettings.AgingInkIntensity, agingSettings.IsAgingEnabled);
+                ApplyAgedInkColorToDocument(_lastInkAgingIntensity, IsDarkModeEffective());
+                _inkRenderer?.SetAppearance(_lastInkAgingIntensity / AgingConstants.MaxAgingSaturation,
+                    IsDarkModeEffective());
 
                 ContentEditorBox.Document.UndoLimit = 0;
                 ContentEditorBox.Document.UndoLimit = 100;
@@ -681,13 +789,12 @@ namespace Journal.Views
             }
         }
 
-        private void EditorScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+        private void EditorViewport_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             double availableWidth = e.NewSize.Width;
             if (availableWidth > 0 && EditorPaperContainer != null)
             {
-                // 动态拉伸并约束最大黄金排版宽度 860px，彻底消除空文本被压扁成 150px 窄条 Bug
-                double targetWidth = Math.Min(860, Math.Max(320, availableWidth - 48));
+                double targetWidth = Math.Min(860, Math.Max(1, availableWidth - 48));
                 EditorPaperContainer.Width = targetWidth;
             }
         }
@@ -720,5 +827,204 @@ namespace Journal.Views
             args.Handled = true;
             TriggerManualSave();
         }
+
+        #region 岁月沉淀：字迹风化
+
+        private void AttachEditorScrollViewer()
+        {
+            ContentEditorBox.ApplyTemplate();
+            var scrollViewer = FindDescendantScrollViewer(ContentEditorBox);
+            if (ReferenceEquals(_editorInnerScrollViewer, scrollViewer)) return;
+            DetachEditorScrollViewer();
+            _editorInnerScrollViewer = scrollViewer;
+            if (scrollViewer != null)
+            {
+                scrollViewer.ViewChanged += EditorInnerScrollViewer_ViewChanged;
+                UpdateInkTextureScrollOffset();
+            }
+        }
+
+        private void DetachEditorScrollViewer()
+        {
+            if (_editorInnerScrollViewer != null)
+                _editorInnerScrollViewer.ViewChanged -= EditorInnerScrollViewer_ViewChanged;
+            _editorInnerScrollViewer = null;
+        }
+
+        private static ScrollViewer? FindDescendantScrollViewer(DependencyObject root)
+        {
+            int count = VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                var child = VisualTreeHelper.GetChild(root, i);
+                if (child is ScrollViewer scrollViewer) return scrollViewer;
+                var nested = FindDescendantScrollViewer(child);
+                if (nested != null) return nested;
+            }
+            return null;
+        }
+
+        private void EditorInnerScrollViewer_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+        {
+            UpdateInkTextureScrollOffset();
+        }
+
+        private void UpdateInkTextureScrollOffset()
+        {
+            _inkRenderer?.SetScrollOffset(_editorInnerScrollViewer?.VerticalOffset ?? 0.0);
+        }
+
+        private bool IsDarkModeEffective()
+        {
+            var palette = AmbianceThemeEngine.CurrentPalette;
+            if (palette.ForcedDarkTheme.HasValue) return palette.ForcedDarkTheme.Value;
+            if (ActualTheme == ElementTheme.Dark) return true;
+            if (ActualTheme == ElementTheme.Light) return false;
+            return Application.Current?.RequestedTheme == ApplicationTheme.Dark;
+        }
+
+        private void OnAmbiancePaletteChanged()
+        {
+            DispatcherQueue.TryEnqueue(() => UpdateInkWeatheringVisual());
+        }
+
+        private void OnActualThemeChanged(FrameworkElement sender, object args)
+        {
+            UpdateInkWeatheringVisual();
+        }
+
+        private void InitializeInkWeatheringVisual()
+        {
+            try
+            {
+                _inkRenderer = new InkWeatheringRenderer(ContentEditorBox, InkWeatheringHost);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine($"[InkWeathering Init Error] {ex}");
+            }
+        }
+
+        private void UpdateInkWeatheringVisual(bool forceTextureReload = false)
+        {
+            _ = UpdateInkWeatheringVisualAsync(forceTextureReload);
+        }
+
+        private bool IsInkTexturePrepared()
+        {
+            return _inkRenderer?.HasTexture == true &&
+                string.Equals(_currentInkTexturePath,
+                    AppSettingsService.Instance.CurrentSettings.AgingInkTexturePath,
+                    StringComparison.Ordinal);
+        }
+
+        private async Task UpdateInkWeatheringVisualAsync(bool forceTextureReload = false, bool preloadOnly = false)
+        {
+            if (_inkRenderer == null) return;
+            int version = ++_inkUpdateVersion;
+            CanvasBitmap? newTexture = null;
+            try
+            {
+                var settings = AppSettingsService.Instance.CurrentSettings;
+                if (!preloadOnly)
+                {
+                    _lastInkAgingIntensity = AgingEngineService.Instance.CalculateAgingIntensity(
+                        ViewModel.CurrentDate, settings.AgingInkIntensity, settings.IsAgingEnabled);
+                    bool dark = IsDarkModeEffective();
+                    ApplyAgedInkColorToDocument(_lastInkAgingIntensity, dark);
+                    _inkRenderer.SetAppearance(_lastInkAgingIntensity / AgingConstants.MaxAgingSaturation, dark);
+                    if (_lastInkAgingIntensity <= 0.0001) return;
+                }
+                if (!forceTextureReload && IsInkTexturePrepared()) return;
+                string? customPath = settings.AgingInkTexturePath;
+                string texturePath = await AgingEngineService.Instance.GetInkWeatheringMaskPathAsync(customPath);
+                if (version != _inkUpdateVersion) return;
+                newTexture = await _inkRenderer.LoadTextureAsync(texturePath);
+                if (version != _inkUpdateVersion) return;
+                _inkRenderer.SetTexture(newTexture);
+                newTexture = null;
+                _currentInkTexturePath = customPath;
+                UpdateInkTextureScrollOffset();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine($"[InkWeathering Texture Error] {ex}");
+            }
+            finally
+            {
+                newTexture?.Dispose();
+            }
+        }
+        private static Windows.UI.Color GetBaseAgedInkColor(double intensity, bool isDark)
+        {
+            var fresh = isDark
+                ? Windows.UI.Color.FromArgb(255, 255, 255, 255)
+                : Windows.UI.Color.FromArgb(255, 26, 26, 26);
+            if (intensity <= 0.0001)
+            {
+                return fresh;
+            }
+
+            var aged = isDark
+                ? Windows.UI.Color.FromArgb(255, 202, 190, 176)
+                : Windows.UI.Color.FromArgb(255, 85, 72, 58);
+            double t = Math.Clamp(intensity / AgingConstants.MaxAgingSaturation, 0.0, 1.0);
+            return Windows.UI.Color.FromArgb(255,
+                (byte)Math.Round(fresh.R + (aged.R - fresh.R) * t),
+                (byte)Math.Round(fresh.G + (aged.G - fresh.G) * t),
+                (byte)Math.Round(fresh.B + (aged.B - fresh.B) * t));
+        }
+
+        private void ApplyAgedInkColorToDocument(double intensity, bool isDark)
+        {
+            try
+            {
+                var doc = ContentEditorBox.Document;
+                if (doc == null) return;
+
+                bool aged = intensity > 0.0001;
+                if (_isUsingAgedSelectionHighlight != aged)
+                {
+                    if (aged)
+                    {
+                        _agedSelectionHighlightColor ??= new SolidColorBrush(
+                            Windows.UI.Color.FromArgb(255, 0, 120, 215));
+                        ContentEditorBox.SelectionHighlightColor = _agedSelectionHighlightColor;
+                        ContentEditorBox.SelectionHighlightColorWhenNotFocused = _agedSelectionHighlightColor;
+                    }
+                    else
+                    {
+                        ContentEditorBox.SelectionHighlightColor = _nativeSelectionHighlightColor;
+                        ContentEditorBox.SelectionHighlightColorWhenNotFocused =
+                            _nativeSelectionHighlightColorWhenNotFocused;
+                    }
+                    _isUsingAgedSelectionHighlight = aged;
+                }
+
+                Windows.UI.Color targetColor = GetBaseAgedInkColor(intensity, isDark);
+                _editorInkBrush.Color = targetColor;
+                if (!ReferenceEquals(ContentEditorBox.Foreground, _editorInkBrush))
+                    ContentEditorBox.Foreground = _editorInkBrush;
+
+                if (_lastAppliedInkColor == targetColor) return;
+
+                var defaultFormat = doc.GetDefaultCharacterFormat();
+                defaultFormat.ForegroundColor = targetColor;
+                doc.SetDefaultCharacterFormat(defaultFormat);
+
+                // RichEditBox may retain explicit formatting on existing runs.
+                // Recolor them when the date/theme changes; typing uses the same
+                // default color and does not trigger this whole-document pass.
+                var wholeStory = doc.GetRange(0, int.MaxValue);
+                wholeStory.CharacterFormat.ForegroundColor = targetColor;
+                _lastAppliedInkColor = targetColor;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ApplyAgedInkColorToDocument Error] {ex.Message}");
+            }
+        }
+
+        #endregion
     }
 }

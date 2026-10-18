@@ -129,13 +129,11 @@
             </Grid>
         </Border>
 
-        <!-- 居中舒适书写区域（黄金阅读排版视口，在 4K 超宽屏下始终保持居中优雅舒展，彻底根除过窄长条 Bug） -->
-        <ScrollViewer x:Name="EditorScrollViewer" Grid.Row="1"
-                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                      SizeChanged="EditorScrollViewer_SizeChanged">
-            <Grid Padding="24,16,24,36" HorizontalAlignment="Stretch">
-                <Grid x:Name="EditorPaperContainer" MaxWidth="860" HorizontalAlignment="Stretch">
-                    <!-- 纯净原生 RichEditBox：深度沉浸无色差，覆盖所有焦点和悬停背景为 Transparent -->
+        <!-- 编辑器保持视口大小；超长正文交给同一个 RichEditBox 滚动，避免为整篇文章分配巨幅遮罩表面。 -->
+        <Grid x:Name="EditorViewport" Grid.Row="1" Padding="24,16,24,36"
+              SizeChanged="EditorViewport_SizeChanged">
+                <Grid x:Name="EditorPaperContainer" MaxWidth="860" HorizontalAlignment="Center">
+                    <!-- 字形与风化遮罩始终来自同一个原生排版视口。 -->
                     <RichEditBox x:Name="ContentEditorBox"
                                  HorizontalAlignment="Stretch"
                                  AcceptsReturn="True"
@@ -145,8 +143,11 @@
                                  Background="Transparent"
                                  BorderThickness="0"
                                  CornerRadius="0"
-                                 MinHeight="650"
-                                 Padding="16,20">
+                                 Padding="16,20"
+                                 ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 ScrollViewer.VerticalScrollMode="Enabled"
+                                 ScrollViewer.HorizontalScrollMode="Disabled">
                         <RichEditBox.Resources>
                             <!-- 彻底覆盖 WinUI 3 控件模板内置的背景与边框笔刷，根除点击时弹出矩形框与任何色差 -->
                             <SolidColorBrush x:Key="TextControlBackground" Color="Transparent"/>
@@ -157,10 +158,20 @@
                             <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent"/>
                             <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent"/>
                             <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="Transparent"/>
+                            <!-- 焦点和悬停状态共用字色，避免控件模板把旧日记切回默认黑字。 -->
+                            <SolidColorBrush x:Key="TextControlForeground" Color="#FF1A1A1A"/>
+                            <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="#FF1A1A1A"/>
+                            <SolidColorBrush x:Key="TextControlForegroundFocused" Color="#FF1A1A1A"/>
                         </RichEditBox.Resources>
                     </RichEditBox>
+
+                    <!-- 字迹纹理只在编辑器实际绘出的笔画内显示，交互始终交给原生编辑器。 -->
+                    <Border x:Name="InkWeatheringHost"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Stretch"
+                            IsHitTestVisible="False"
+                            CornerRadius="4" />
                 </Grid>
-            </Grid>
-        </ScrollViewer>
+        </Grid>
     </Grid>
 </Page>

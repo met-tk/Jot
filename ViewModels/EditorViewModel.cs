@@ -52,16 +52,21 @@ namespace Journal.ViewModels
             UpdateDateHeader();
         }
 
+        private int _loadDateVersion;
+
         public async Task LoadDateAsync(DateTime date)
         {
+            int version = Interlocked.Increment(ref _loadDateVersion);
+            DateTime requestedDate = date.Date;
             IsLoading = true;
             try
             {
-                CurrentDate = date.Date;
-                UpdateDateHeader();
+                CurrentDate = requestedDate;
 
-                string content = await _storage.LoadDiaryContentAsync(CurrentDate);
+                string content = await _storage.LoadDiaryContentAsync(requestedDate);
+                if (version != _loadDateVersion) return;
                 DiaryContent = content;
+                UpdateDateHeader();
                 WordCount = _storage.CalculateWordCount(content);
                 TimestampsCount = _storage.CountTimestamps(content);
 
@@ -70,7 +75,7 @@ namespace Journal.ViewModels
             }
             finally
             {
-                IsLoading = false;
+                if (version == _loadDateVersion) IsLoading = false;
             }
         }
 

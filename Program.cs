@@ -34,6 +34,32 @@ namespace Journal
         [STAThread]
         public static void Main(string[] args)
         {
+            // 命令行参数拦截：自动化验证模式分发 (在互斥体与 UI 初始化之前执行)
+            if (args.Length > 0)
+            {
+                if (string.Equals(args[0], "--verify-m1", StringComparison.OrdinalIgnoreCase))
+                {
+                    int exitCode = Verification.AgingVerificationRunner.RunM1Tests();
+                    Environment.Exit(exitCode);
+                    return;
+                }
+
+                if (string.Equals(args[0], "--verify-m2", StringComparison.OrdinalIgnoreCase))
+                {
+                    int exitCode = Verification.AgingVerificationRunner.RunM2Tests();
+                    Environment.Exit(exitCode);
+                    return;
+                }
+
+                if (string.Equals(args[0], "--verify-m3", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(args[0], "--verify-aging", StringComparison.OrdinalIgnoreCase))
+                {
+                    int exitCode = Verification.AgingVerificationRunner.RunM3Tests();
+                    Environment.Exit(exitCode);
+                    return;
+                }
+            }
+
             // 具名互斥体单实例保护 (Scoped to Local User Session)，妥善接管上次异常退出遗留的 AbandonedMutex
             bool ownsMutex = false;
             try

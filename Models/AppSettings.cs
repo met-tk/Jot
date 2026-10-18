@@ -32,6 +32,14 @@ namespace Journal.Models
         public string ThemeAmbiance { get; set; } = "ClassicSepia"; // "ClassicSepia", "Default", "WarmPaper", "MidnightDark", "DawnMist", "TwilightLavender"
         public double BackgroundTintOpacity { get; set; } = 0.0; // 0.0 ~ 0.9 (纯色遮罩)
 
+        // 5. 岁月沉淀拟物渲染系统
+        public bool IsAgingEnabled { get; set; } = true;
+        public string? AgingPaperTexturePath { get; set; } = null;
+        public string? AgingInkTexturePath { get; set; } = null;
+        public double AgingIntensity { get; set; } = 0.85; // 0.0 ~ 1.0 (保留向后兼容)
+        public double AgingPaperIntensity { get; set; } = 0.85; // 0.0 ~ 1.0 (纸张底色老化强度)
+        public double AgingInkIntensity { get; set; } = 0.85; // 0.0 ~ 1.0 (字迹风化褪色强度)
+
         // 5. 窗口位置、尺寸与视图缩放记忆
         public int WindowX { get; set; } = -1;
         public int WindowY { get; set; } = -1;
@@ -95,6 +103,12 @@ namespace Journal.Models
                 BackdropType = this.BackdropType,
                 ThemeAmbiance = this.ThemeAmbiance,
                 BackgroundTintOpacity = this.BackgroundTintOpacity,
+                IsAgingEnabled = this.IsAgingEnabled,
+                AgingPaperTexturePath = this.AgingPaperTexturePath,
+                AgingInkTexturePath = this.AgingInkTexturePath,
+                AgingIntensity = this.AgingIntensity,
+                AgingPaperIntensity = this.AgingPaperIntensity,
+                AgingInkIntensity = this.AgingInkIntensity,
                 WindowX = this.WindowX,
                 WindowY = this.WindowY,
                 WindowWidth = this.WindowWidth,

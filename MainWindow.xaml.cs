@@ -1,12 +1,16 @@
-using System;
+using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Threading.Tasks;
+using Microsoft.Graphics.Canvas.Effects;
 using Microsoft.UI;
+using Microsoft.UI.Composition;
+using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Composition.SystemBackdrops;
 using Journal.Models;
 using Journal.Services;
 using Windows.Graphics;
@@ -121,6 +125,9 @@ namespace Journal
             ApplyThemeAndBackdrop(initialSettings.BackdropType, initialSettings.ThemeAmbiance, initialSettings.BackgroundTintOpacity);
             ApplyUiFont(initialSettings.UiFontFamily);
 
+            // 4.5. 初始化全软件全局纸张底色岁月老化渲染宿主
+            InitializeGlobalPaperAgingVisual();
+
             AppSettingsService.Instance.SettingsChanged += OnAppSettingsChanged;
 
             // 5. 挂载窗口退出前确认拦截弹窗
@@ -139,6 +146,7 @@ namespace Journal
             {
                 ApplyThemeAndBackdrop(settings.BackdropType, settings.ThemeAmbiance, settings.BackgroundTintOpacity);
                 ApplyUiFont(settings.UiFontFamily);
+                UpdateGlobalPaperAging(forceTextureReload: false);
             });
         }
 
@@ -174,6 +182,13 @@ namespace Journal
 
             try
             {
+                _paperUpdateVersion++;
+                _globalPaperAgingSurfaceBrush?.Dispose();
+                _globalPaperAgingEffectBrush?.Dispose();
+                _globalPaperAgingBackdropBrush?.Dispose();
+                _globalPaperAgingLoadedSurface?.Dispose();
+                _globalPaperAgingSpriteVisual?.Dispose();
+
                 SoundEffectService.Instance.Dispose();
                 AppSettingsService.Instance.Dispose();
                 _ = DiaryIndexService.Instance.CloseConnectionAsync();
@@ -956,6 +971,206 @@ namespace Journal
                     }
                 }
             });
+        }
+
+        #endregion
+
+        #region 岁月沉淀：全软件全局底色层纸张老化渲染 (Global Paper Aging Layer)
+
+        private Compositor? _agingCompositor;
+        private SpriteVisual? _globalPaperAgingSpriteVisual;
+        private CompositionEffectBrush? _globalPaperAgingEffectBrush;
+        private CompositionSurfaceBrush? _globalPaperAgingSurfaceBrush;
+        private CompositionBackdropBrush? _globalPaperAgingBackdropBrush;
+        private LoadedImageSurface? _globalPaperAgingLoadedSurface;
+        private bool? _currentGlobalAgingIsDark;
+        private string? _currentGlobalAgingTexturePath;
+        private int _paperUpdateVersion;
+
+        private void InitializeGlobalPaperAgingVisual()
+        {
+            try
+            {
+                if (GlobalPaperAgingHost == null) return;
+
+                if (this.Content is FrameworkElement root)
+                {
+                    _agingCompositor = ElementCompositionPreview.GetElementVisual(root).Compositor;
+                }
+                if (_agingCompositor == null) return;
+
+                _globalPaperAgingSpriteVisual = _agingCompositor.CreateSpriteVisual();
+                _globalPaperAgingSpriteVisual.IsVisible = false;
+                _globalPaperAgingSpriteVisual.Opacity = 0.0f;
+
+                // 尺寸自适应表达式动画：直接在合成器线程锁定宿主大小
+                var hostVisual = ElementCompositionPreview.GetElementVisual(GlobalPaperAgingHost);
+                var sizeAnim = _agingCompositor.CreateExpressionAnimation("hostVisual.Size");
+                sizeAnim.SetReferenceParameter("hostVisual", hostVisual);
+                _globalPaperAgingSpriteVisual.StartAnimation("Size", sizeAnim);
+
+                GlobalPaperAgingHost.SizeChanged += (s, e) =>
+                {
+                    if (_globalPaperAgingSpriteVisual != null && e.NewSize.Width > 0 && e.NewSize.Height > 0)
+                    {
+                        _globalPaperAgingSpriteVisual.Size = new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height);
+                    }
+                };
+
+                ElementCompositionPreview.SetElementChildVisual(GlobalPaperAgingHost, _globalPaperAgingSpriteVisual);
+
+                // 订阅全局正在查看日记日期变更
+                AgingEngineService.Instance.CurrentViewingDateChanged += (s, date) =>
+                {
+                    this.DispatcherQueue?.TryEnqueue(() =>
+                    {
+                        UpdateGlobalPaperAging(forceTextureReload: false);
+                    });
+                };
+
+                // 订阅氛围色板与主题变更
+                AmbianceThemeEngine.AmbiancePaletteChanged += () =>
+                {
+                    this.DispatcherQueue?.TryEnqueue(() =>
+                    {
+                        UpdateGlobalPaperAging();
+                    });
+                };
+
+                if (this.Content is FrameworkElement fe)
+                {
+                    fe.ActualThemeChanged += (s, e) =>
+                    {
+                        UpdateGlobalPaperAging();
+                    };
+                }
+
+                UpdateGlobalPaperAging(forceTextureReload: false);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GlobalPaperAging Init Error] {ex.Message}");
+            }
+        }
+
+        public void UpdateGlobalPaperAging(bool forceTextureReload = false)
+        {
+            _ = UpdateGlobalPaperAgingAsync(forceTextureReload);
+        }
+
+        private async Task UpdateGlobalPaperAgingAsync(bool forceTextureReload = false)
+        {
+            if (_globalPaperAgingSpriteVisual == null || _agingCompositor == null) return;
+            int version = ++_paperUpdateVersion;
+            LoadedImageSurface? newSurface = null;
+            CompositionSurfaceBrush? newTextureBrush = null;
+            CompositionEffectBrush? newEffectBrush = null;
+            CompositionBackdropBrush? newBackdropBrush = null;
+
+            try
+            {
+                DateTime targetDate = AgingEngineService.Instance.CurrentViewingDate;
+                var settings = AppSettingsService.Instance.CurrentSettings;
+                bool isEnabled = settings.IsAgingEnabled;
+                double userStrength = settings.AgingPaperIntensity;
+                string? customPath = settings.AgingPaperTexturePath;
+
+                double intensity = AgingEngineService.Instance.CalculateAgingIntensity(targetDate, userStrength, isEnabled);
+                // 当日免老化原则 (Delta t <= 0) 或功能未启用
+                if (!isEnabled || intensity <= 0.0001)
+                {
+                    _globalPaperAgingSpriteVisual.IsVisible = false;
+                    _globalPaperAgingSpriteVisual.Opacity = 0.0f;
+                    return;
+                }
+
+                bool isDark = IsGlobalAgingDarkEffective();
+                bool themeChanged = (_currentGlobalAgingIsDark != isDark);
+                bool textureChanged = (_currentGlobalAgingTexturePath != customPath);
+
+                _globalPaperAgingSpriteVisual.Opacity = (float)intensity;
+                _globalPaperAgingSpriteVisual.IsVisible = _globalPaperAgingEffectBrush != null;
+
+                if (forceTextureReload || themeChanged || textureChanged || _globalPaperAgingEffectBrush == null)
+                {
+                    string texturePath = await AgingEngineService.Instance.GetPreprocessedPaperTexturePathAsync(customPath, isDark);
+                    if (version != _paperUpdateVersion) return;
+                    newSurface = await AgingImageSurfaceLoader.LoadAsync(texturePath);
+                    if (version != _paperUpdateVersion) return;
+
+                    // 真·正片叠底与反向滤色混合管道：
+                    // 使用 CompositionBackdropBrush 实时捕获窗口底色（Mica/Acrylic 与 BackdropTintOverlay 真实像素）
+                    // 浅色模式下 BlendEffectMode.Multiply 正片叠底将纸纹纤维真实渗透压暗底色；
+                    // 深色模式下 BlendEffectMode.Screen 反向滤色将亮场纸纹纤维柔和漫射提亮。
+                    var blendEffect = new BlendEffect
+                    {
+                        Mode = isDark ? BlendEffectMode.Screen : BlendEffectMode.Multiply,
+                        Background = new CompositionEffectSourceParameter("Background"),
+                        Foreground = new CompositionEffectSourceParameter("Foreground")
+                    };
+
+                    var effectFactory = _agingCompositor.CreateEffectFactory(blendEffect);
+                    newEffectBrush = effectFactory.CreateBrush();
+
+                    newBackdropBrush = _agingCompositor.CreateBackdropBrush();
+                    newEffectBrush.SetSourceParameter("Background", newBackdropBrush);
+
+                    newTextureBrush = _agingCompositor.CreateSurfaceBrush(newSurface);
+                    newTextureBrush.Stretch = CompositionStretch.UniformToFill;
+                    newTextureBrush.HorizontalAlignmentRatio = 0.5f;
+                    newTextureBrush.VerticalAlignmentRatio = 0.5f;
+                    newEffectBrush.SetSourceParameter("Foreground", newTextureBrush);
+
+                    var oldSurface = _globalPaperAgingLoadedSurface;
+                    var oldTextureBrush = _globalPaperAgingSurfaceBrush;
+                    var oldEffectBrush = _globalPaperAgingEffectBrush;
+                    var oldBackdropBrush = _globalPaperAgingBackdropBrush;
+                    _globalPaperAgingSpriteVisual.Brush = newEffectBrush;
+                    _globalPaperAgingEffectBrush = newEffectBrush;
+                    _globalPaperAgingBackdropBrush = newBackdropBrush;
+                    _globalPaperAgingSurfaceBrush = newTextureBrush;
+                    _globalPaperAgingLoadedSurface = newSurface;
+                    _currentGlobalAgingIsDark = isDark;
+                    _currentGlobalAgingTexturePath = customPath;
+                    oldTextureBrush?.Dispose();
+                    oldEffectBrush?.Dispose();
+                    oldBackdropBrush?.Dispose();
+                    oldSurface?.Dispose();
+                    newSurface = null;
+                    newTextureBrush = null;
+                    newEffectBrush = null;
+                    newBackdropBrush = null;
+                }
+
+                _globalPaperAgingSpriteVisual.IsVisible = true;
+                _globalPaperAgingSpriteVisual.Opacity = (float)intensity;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[UpdateGlobalPaperAging Error] {ex.Message}");
+            }
+            finally
+            {
+                newTextureBrush?.Dispose();
+                newEffectBrush?.Dispose();
+                newBackdropBrush?.Dispose();
+                newSurface?.Dispose();
+            }
+        }
+
+        private bool IsGlobalAgingDarkEffective()
+        {
+            var palette = AmbianceThemeEngine.CurrentPalette;
+            if (palette.ForcedDarkTheme.HasValue)
+            {
+                return palette.ForcedDarkTheme.Value;
+            }
+            if (this.Content is FrameworkElement fe)
+            {
+                if (fe.ActualTheme == ElementTheme.Dark) return true;
+                if (fe.ActualTheme == ElementTheme.Light) return false;
+            }
+            return Application.Current?.RequestedTheme == ApplicationTheme.Dark;
         }
 
         #endregion

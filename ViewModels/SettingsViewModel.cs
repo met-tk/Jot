@@ -2,11 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Journal.Models;
 using Journal.Services;
 using Microsoft.UI.Xaml.Media;
+using Windows.Storage.Pickers;
+using WinRT.Interop;
 
 namespace Journal.ViewModels
 {
@@ -111,7 +114,38 @@ namespace Journal.ViewModels
         private string _storageDirectoryPath = string.Empty;
 
         [ObservableProperty]
-        private string _appVersionText = "Jot v1.2.1";
+        private string _appVersionText = "Jot v1.3.0";
+
+        // 岁月沉淀拟物渲染系统配置项
+        [ObservableProperty]
+        private bool _isAgingEnabled = true;
+
+        [ObservableProperty]
+        private string? _agingPaperTexturePath;
+
+        [ObservableProperty]
+        private string? _agingInkTexturePath;
+
+        [ObservableProperty]
+        private double _agingIntensityPercent = 85.0;
+
+        [ObservableProperty]
+        private double _agingPaperIntensityPercent = 85.0;
+
+        [ObservableProperty]
+        private double _agingInkIntensityPercent = 85.0;
+
+        [ObservableProperty]
+        private string _agingPaperTextureDisplayName = "内置经典纸纹";
+
+        [ObservableProperty]
+        private string _agingInkTextureDisplayName = "内置经典墨渍";
+
+        [ObservableProperty]
+        private string _agingCacheSizeText = "0 KB";
+
+        [ObservableProperty]
+        private string _agingStatusMessage = string.Empty;
 
         [ObservableProperty]
         private string _samplePreviewText = "天地者万物之逆旅也，光阴者百代之过客也。";
@@ -185,6 +219,15 @@ namespace Journal.ViewModels
                 SelectedBackdrop = s.BackdropType;
                 SelectedAmbiance = string.IsNullOrWhiteSpace(s.ThemeAmbiance) ? "Default" : s.ThemeAmbiance;
                 BackgroundTintOpacityPercent = Math.Round(s.BackgroundTintOpacity * 100.0, 0);
+
+                IsAgingEnabled = s.IsAgingEnabled;
+                AgingPaperTexturePath = s.AgingPaperTexturePath;
+                AgingInkTexturePath = s.AgingInkTexturePath;
+                AgingIntensityPercent = Math.Round(s.AgingIntensity * 100.0, 0);
+                AgingPaperIntensityPercent = Math.Round(s.AgingPaperIntensity * 100.0, 0);
+                AgingInkIntensityPercent = Math.Round(s.AgingInkIntensity * 100.0, 0);
+                UpdateAgingTextureDisplayNames();
+                RefreshAgingCacheSize();
 
                 OnPropertyChanged(nameof(PreviewFontFamily));
                 OnPropertyChanged(nameof(PreviewLineHeight));
@@ -449,5 +492,212 @@ namespace Journal.ViewModels
                 Debug.WriteLine($"[OpenStorageFolder] Failed: {ex.Message}");
             }
         }
+
+        #region 岁月沉淀拟物渲染系统命令与响应
+
+        partial void OnIsAgingEnabledChanged(bool value)
+        {
+            if (_isUpdatingFromModel || _isSavingLocally) return;
+            _isSavingLocally = true;
+            try
+            {
+                _settingsService.Update(s => s.IsAgingEnabled = value);
+                AgingStatusMessage = value ? "岁月沉淀拟物渲染已启用" : "岁月沉淀已关闭，恢复原生纸张与字迹";
+            }
+            finally
+            {
+                _isSavingLocally = false;
+            }
+        }
+
+        partial void OnAgingIntensityPercentChanged(double value)
+        {
+            if (_isUpdatingFromModel || _isSavingLocally) return;
+            _isSavingLocally = true;
+            try
+            {
+                double normalized = Math.Clamp(value / 100.0, 0.0, 1.0);
+                _settingsService.Update(s => s.AgingIntensity = normalized);
+            }
+            finally
+            {
+                _isSavingLocally = false;
+            }
+        }
+
+        partial void OnAgingPaperIntensityPercentChanged(double value)
+        {
+            if (_isUpdatingFromModel || _isSavingLocally) return;
+            _isSavingLocally = true;
+            try
+            {
+                double normalized = Math.Clamp(value / 100.0, 0.0, 1.0);
+                _settingsService.Update(s => s.AgingPaperIntensity = normalized);
+            }
+            finally
+            {
+                _isSavingLocally = false;
+            }
+        }
+
+        partial void OnAgingInkIntensityPercentChanged(double value)
+        {
+            if (_isUpdatingFromModel || _isSavingLocally) return;
+            _isSavingLocally = true;
+            try
+            {
+                double normalized = Math.Clamp(value / 100.0, 0.0, 1.0);
+                _settingsService.Update(s => s.AgingInkIntensity = normalized);
+            }
+            finally
+            {
+                _isSavingLocally = false;
+            }
+        }
+
+        [RelayCommand]
+        public async Task SelectPaperTextureAsync()
+        {
+            try
+            {
+                var hwnd = MainWindow.GetActiveWindowHandle();
+                if (hwnd == IntPtr.Zero) return;
+
+                var picker = new FileOpenPicker();
+                InitializeWithWindow.Initialize(picker, hwnd);
+                picker.ViewMode = PickerViewMode.Thumbnail;
+                picker.SuggestedStartLocation = PickerLocationId.PicturesLibrary;
+                picker.FileTypeFilter.Add(".png");
+                picker.FileTypeFilter.Add(".jpg");
+                picker.FileTypeFilter.Add(".jpeg");
+                picker.FileTypeFilter.Add(".bmp");
+
+                var file = await picker.PickSingleFileAsync();
+                if (file != null && File.Exists(file.Path))
+                {
+                    await AgingEngineService.Instance.GetPreprocessedPaperTexturePathAsync(file.Path, isDarkMode: false);
+                    AgingPaperTexturePath = file.Path;
+                    _settingsService.Update(s => s.AgingPaperTexturePath = file.Path);
+                    UpdateAgingTextureDisplayNames();
+                    RefreshAgingCacheSize();
+                    AgingStatusMessage = "已成功载入自定义纸张纹理！";
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[SelectPaperTextureAsync Error] {ex.Message}");
+                AgingStatusMessage = $"选择纸张纹理失败: {ex.Message}";
+            }
+        }
+
+        [RelayCommand]
+        public void ResetPaperTexture()
+        {
+            AgingPaperTexturePath = null;
+            _settingsService.Update(s => s.AgingPaperTexturePath = null);
+            UpdateAgingTextureDisplayNames();
+            RefreshAgingCacheSize();
+            AgingStatusMessage = "已重置为内置经典纸张纹理";
+        }
+
+        [RelayCommand]
+        public async Task SelectInkTextureAsync()
+        {
+            try
+            {
+                var hwnd = MainWindow.GetActiveWindowHandle();
+                if (hwnd == IntPtr.Zero) return;
+
+                var picker = new FileOpenPicker();
+                InitializeWithWindow.Initialize(picker, hwnd);
+                picker.ViewMode = PickerViewMode.Thumbnail;
+                picker.SuggestedStartLocation = PickerLocationId.PicturesLibrary;
+                picker.FileTypeFilter.Add(".png");
+                picker.FileTypeFilter.Add(".jpg");
+                picker.FileTypeFilter.Add(".jpeg");
+                picker.FileTypeFilter.Add(".bmp");
+
+                var file = await picker.PickSingleFileAsync();
+                if (file != null && File.Exists(file.Path))
+                {
+                    await AgingEngineService.Instance.GetInkWeatheringMaskPathAsync(file.Path);
+                    AgingInkTexturePath = file.Path;
+                    _settingsService.Update(s => s.AgingInkTexturePath = file.Path);
+                    UpdateAgingTextureDisplayNames();
+                    RefreshAgingCacheSize();
+                    AgingStatusMessage = "已成功载入自定义字迹老化纹理！";
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[SelectInkTextureAsync Error] {ex.Message}");
+                AgingStatusMessage = $"选择字迹纹理失败: {ex.Message}";
+            }
+        }
+
+        [RelayCommand]
+        public void ResetInkTexture()
+        {
+            AgingInkTexturePath = null;
+            _settingsService.Update(s => s.AgingInkTexturePath = null);
+            UpdateAgingTextureDisplayNames();
+            RefreshAgingCacheSize();
+            AgingStatusMessage = "已重置为内置经典字迹老化纹理";
+        }
+
+        [RelayCommand]
+        public void ClearAgingCache()
+        {
+            try
+            {
+                AgingCacheService.Instance.ClearAllDiskCaches();
+                RefreshAgingCacheSize();
+                AgingStatusMessage = AgingCacheService.Instance.GetCacheSizeBytes() == 0
+                    ? "已清理磁盘中的预处理贴图缓存。当前显示的贴图会在下次切换时更新。"
+                    : "部分贴图缓存正在使用，请稍后再清理。";
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ClearAgingCache Error] {ex.Message}");
+                AgingStatusMessage = $"清空缓存失败: {ex.Message}";
+            }
+        }
+
+        public void RefreshAgingCacheSize()
+        {
+            try
+            {
+                long bytes = AgingCacheService.Instance.GetCacheSizeBytes();
+                if (bytes < 1024)
+                {
+                    AgingCacheSizeText = $"{bytes} B";
+                }
+                else if (bytes < 1024 * 1024)
+                {
+                    AgingCacheSizeText = $"{bytes / 1024.0:F1} KB";
+                }
+                else
+                {
+                    AgingCacheSizeText = $"{bytes / (1024.0 * 1024.0):F2} MB";
+                }
+            }
+            catch
+            {
+                AgingCacheSizeText = "0 KB";
+            }
+        }
+
+        private void UpdateAgingTextureDisplayNames()
+        {
+            AgingPaperTextureDisplayName = string.IsNullOrWhiteSpace(AgingPaperTexturePath)
+                ? $"内置经典纸纹 ({AgingConstants.DefaultPaperTextureFileName})"
+                : Path.GetFileName(AgingPaperTexturePath);
+
+            AgingInkTextureDisplayName = string.IsNullOrWhiteSpace(AgingInkTexturePath)
+                ? $"内置经典墨渍 ({AgingConstants.DefaultInkTextureFileName})"
+                : Path.GetFileName(AgingInkTexturePath);
+        }
+
+        #endregion
     }
 }

@@ -256,6 +256,148 @@
                     </StackPanel>
                 </Border>
 
+                <!-- 3.5 岁月沉淀 (拟物老化与风化) -->
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                        CornerRadius="8" Padding="20,18">
+                    <StackPanel Spacing="16">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <FontIcon Glyph="&#xEC92;" FontSize="16" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
+                                    <TextBlock Text="岁月沉淀 (纸张与字迹岁月老化)" FontSize="15" FontWeight="SemiBold"/>
+                                </StackPanel>
+                                <TextBlock Text="随日记记录时间久远，对底色纸张与墨水字迹独立施加拟物风化渲染"
+                                           FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Margin="24,0,0,0"/>
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ViewModel.IsAgingEnabled, Mode=TwoWay}"
+                                          OnContent="开启" OffContent="关闭"/>
+                        </Grid>
+
+                        <StackPanel Visibility="{x:Bind ViewModel.IsAgingEnabled, Mode=OneWay}" Spacing="16" Margin="0,4,0,0">
+                            <!-- 纸张底色纹理贴图选择 -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock Text="纸张底色纹理贴图" FontSize="13" FontWeight="Medium"/>
+                                     <TextBlock Text="自动去色转为灰度；浅色主题正片叠底，深色主题反相滤色"
+                                               FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                                    <TextBlock Text="{x:Bind ViewModel.AgingPaperTextureDisplayName, Mode=OneWay}"
+                                               FontSize="11" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" Margin="0,2,0,0"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Button Content="选择贴图" Style="{ThemeResource AccentButtonStyle}" Padding="12,6"
+                                            Command="{x:Bind ViewModel.SelectPaperTextureCommand}"/>
+                                    <Button Content="重置默认" Style="{ThemeResource SubtleButtonStyle}" Padding="10,6"
+                                            Command="{x:Bind ViewModel.ResetPaperTextureCommand}"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- 字迹老化风化贴图选择 -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock Text="字迹岁月风化贴图" FontSize="13" FontWeight="Medium"/>
+                                     <TextBlock Text="先转灰度，再提取墨迹纹理；纹理只覆盖编辑器字形"
+                                               FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                                    <TextBlock Text="{x:Bind ViewModel.AgingInkTextureDisplayName, Mode=OneWay}"
+                                               FontSize="11" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" Margin="0,2,0,0"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Button Content="选择贴图" Style="{ThemeResource AccentButtonStyle}" Padding="12,6"
+                                            Command="{x:Bind ViewModel.SelectInkTextureCommand}"/>
+                                    <Button Content="重置默认" Style="{ThemeResource SubtleButtonStyle}" Padding="10,6"
+                                            Command="{x:Bind ViewModel.ResetInkTextureCommand}"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- 纸张底色老化强度滑块 -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="220"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock Text="纸张底色老化强度" FontSize="13" FontWeight="Medium"/>
+                                    <TextBlock Text="调节全软件底色层正片叠底/滤色的纹理浓淡，当日日记严格豁免"
+                                               FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                    <Slider Minimum="0" Maximum="100" StepFrequency="1" Width="140"
+                                            Value="{x:Bind ViewModel.AgingPaperIntensityPercent, Mode=TwoWay}"/>
+                                    <TextBlock Text="{x:Bind ViewModel.AgingPaperIntensityPercent, Mode=OneWay}" VerticalAlignment="Center"
+                                               Width="24" FontSize="12" FontWeight="SemiBold"/>
+                                    <TextBlock Text="%" VerticalAlignment="Center" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- 字迹风化褪色强度滑块 -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="220"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock Text="字迹风化褪色强度" FontSize="13" FontWeight="Medium"/>
+                                    <TextBlock Text="调节字体内部墨迹纤维沉淀与边缘褪色深度，空白字隙纯透明"
+                                               FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                    <Slider Minimum="0" Maximum="100" StepFrequency="1" Width="140"
+                                            Value="{x:Bind ViewModel.AgingInkIntensityPercent, Mode=TwoWay}"/>
+                                    <TextBlock Text="{x:Bind ViewModel.AgingInkIntensityPercent, Mode=OneWay}" VerticalAlignment="Center"
+                                               Width="24" FontSize="12" FontWeight="SemiBold"/>
+                                    <TextBlock Text="%" VerticalAlignment="Center" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- 渲染缓存与清理 -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock Text="岁月沉淀渲染缓存" FontSize="13" FontWeight="Medium"/>
+                                    <TextBlock Text="已预处理的高保真灰度与真 Alpha 镂空派生贴图缓存占用"
+                                               FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                                    <TextBlock Text="{x:Bind ViewModel.AgingCacheSizeText, Mode=OneWay}"
+                                               FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="0,2,0,0"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="清空老化缓存" Style="{ThemeResource SubtleButtonStyle}" Padding="12,6"
+                                        Command="{x:Bind ViewModel.ClearAgingCacheCommand}"/>
+                            </Grid>
+
+                            <!-- 状态反馈提示 -->
+                            <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                                    CornerRadius="6" Padding="14,10">
+                                <StackPanel Spacing="4">
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <FontIcon Glyph="&#xE946;" FontSize="12" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
+                                        <TextBlock Text="拟物机制提示" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    </StackPanel>
+                                     <TextBlock Text="• 当日日记不施加纸张或字迹老化；&#x0a;• 历史日记随时间逐渐加深，纸张和字迹可分别调节；&#x0a;• 输入时字迹纹理跟随原生编辑器实时更新。"
+                                               FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                            <TextBlock Text="{x:Bind ViewModel.AgingStatusMessage, Mode=OneWay}"
+                                       FontSize="11" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
                 <!-- 4. 窗口材质与沉浸透度 -->
                 <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"

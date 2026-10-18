@@ -1,29 +1,17 @@
-# Jot (极简沉浸 WinUI 3 日记) - 项目上下文
+# Jot (极简沉浸 WinUI 3 日记) - 项目上下文与最新进展
 
 ## 1. 架构与定位
-- **定位**：Windows 11 本地优先极简沉浸日记软件，深度融合 Mica/Acrylic 质感、打字机拟物音效与 Fluent 动效。
-- **技术栈**：WinUI 3 (.NET 8, Windows App SDK 1.5, win-x64), C# 12, CommunityToolkit.Mvvm, SQLitePCLRaw。
-- **数据真理源**：标准 Markdown (`Documents/JournalData/Journals/{yyyy}/{MM}/{yyyy-MM-dd}.md`)。
-- **索引与配置**：本地 SQLite (`journal_index.db`) 驱动日历与统计；原子配置 (`Documents/JournalData/settings.json`)。
+- **定位**：Windows 11 本地优先极简沉浸日记，深度融合 Mica/Acrylic 质感、拟物音效与 Fluent 动效。
+- **技术栈**：WinUI 3 (.NET 8, Windows App SDK 2.5.1, win-x64), C# 12, CommunityToolkit.Mvvm, SQLitePCLRaw, Win2D 1.3.2。
+- **数据与索引**：标准 Markdown (`Documents/JournalData/Journals/{yyyy}/{MM}/{yyyy-MM-dd}.md`)；SQLite 增量索引；原子落盘配置 (`settings.json`)。
 
-## 2. 核心模块清单
-- `MainWindow.xaml(.cs)`：融入式标题栏 (`ExtendsContentIntoTitleBar`)、Mica/Mica Alt/Acrylic 动态材质与背景通透度热切，支持退出前保存/放弃草稿确认与多屏坐标自适应记忆。
-- `Views/ShellPage.xaml(.cs)`：64px 悬浮微透胶囊导航岛，支持全局快捷键 (`Ctrl+1~6` 及小键盘 `Ctrl+NumPad1~6`) 与鼠标侧键路由至编辑、日历、目录、统计、导入、设置。
-- `Views/EditorPage.xaml(.cs)`：纯文本 RichEditBox 黄金排版，Composition 0-GC 击键微震 (1.1px/2.2px)，IME 拼音捕获与受控多步 Undo/Redo。
-- `Views/DiaryListPage.xaml(.cs)`：自适应卡片时间线，首句诗意提炼（Headline）去冗，支持全文与日期关键词实时检索高亮及多选批量导出/删除。
-- `Views/CalendarPage.xaml(.cs)`：数学无重叠日历面板 (`CalendarGridPanel.cs`)，支持年/月/日三级钻取、热力色阶与 `Ctrl+滚轮` 缩放。
-- `Views/AnalyticsPage.xaml(.cs)`：连击打卡统计、字数梯队、24 小时创作生物钟、近 12 个月自适应趋势看板，以及后台异步 $O(N \cdot L)$ 词云图谱与穿透检索。
-- `Views/ImportPage.xaml(.cs)` & `Services/ImportService.cs`：支持拖拽/选择多源文本、Markdown、JSON、ZIP 归档智能日期切分、实时并排/合并预览与冲突策略。
-- `Views/SettingsPage.xaml(.cs)` & `ViewModels/SettingsViewModel.cs`：Fluent 卡片设计，打字音效切换、手动保存音效预设、音量、字纸震动、字体与材质定制。
-- `Services/SoundEffectService.cs` & `PcmAudioSynthesizer.cs`：16-bit 44.1kHz PCM 声学建模与实录采样（12 款主题 × 14 变体防重复洗牌池 + 手动保存音效预设），POH 零分配就地音量缩放与 WinMM WaveOut 多通道混音。
-- `Services/AppSettingsService.cs`：`_timerLock` + `_stateLock` 线程安全克隆 + 300ms 磁盘防抖 + `.tmp` 原子落盘与内存即时分发。
-- `Services/ExportService.cs` & `DiaryStorageService.cs`：多维导出引擎与原子读写、增量索引同步及自动备份保障。
+## 2. 核心模块清单与岁月沉淀架构 (ADR)
+- `MainWindow.xaml(.cs)`：`GlobalPaperAgingHost` 覆盖全软件窗口底色层，通过 `CompositionBackdropBrush` 实施真·正片叠底 (Multiply) 与反向滤色 (Screen)，实时融入底色与 Mica。
+- `Views/EditorPage.xaml(.cs)`：通过 `CompositionVisualSurface` 采样实际 `RichEditBox` 视口，并从其原生字形覆盖区域提取遮罩。灰度贴图转换为磨损 Alpha，合成时仅在磨损笔画处还原同一位置的干净纸面，形成实际墨迹脱落。亮暗模式分别过滤编辑器底色和蓝色选区；留白保留透明。纹理镜像重复，偏移随正文滚动。原生编辑器始终显示，聚焦与失焦不切换排版层。旧日记内容切换前预加载贴图，输入时仅更新原生控件与 GPU 合成，不重算整篇文字样式。
+- `Services/AgingEngineService.cs`：一级时间衰减模型（当日及未来日记强度为零），纸纹灰度预处理与字迹灰度、透明磨损遮罩两级磁盘缓存。字迹遮罩 `wearmask-v4` 按贴图自身的对比度范围归一化；用户提供的低对比度贴图在 100% 强度下也能形成可见磨损。默认纹理在 `Assets/Textures`。
+- `Views/SettingsPage.xaml` & `ViewModels/SettingsViewModel.cs`：提供独立双滑块（纸张底色强度 `AgingPaperIntensity` / 字迹风化强度 `AgingInkIntensity`），双贴图选择与缓存清理。
+- `Models/AppSettings.cs`：支持独立纸墨强度配置与 300ms 磁盘防抖原子落盘。
 
-## 3. 质量与数据安全保障
-- **增量索引与单次查询复用**：`DiaryIndexService.FullScanAndSyncAsync` 基于文件路径与 `LastWriteTime` 执行增量同步，仅解析新增或变更的日记文件；日历与统计面板复用同一批内存索引，避免重复全表扫描。
-- **消费级容灾与零丢失保障**：
-  - **自动安全快照**：覆盖写入与自动保存前，自动在 `Documents/JournalData/Backups/` 生成带时间戳备份，后台异步滚动修剪。
-  - **物理软删除回收站**：彻底根除裸 `File.Delete` 抹杀，单篇与批量删除统一移交 `Documents/JournalData/Trash/` 回收站。
-  - **孤儿条目与空白日记防御**：物理文件存在即绝不删除数据库索引；退出时若选择“不保存退出”立即清除未保存标志，防止页面卸载回调误覆盖磁盘原文件。
-  - **Windows 并发文件锁防护**：日记只读流统一使用 `FileShare.ReadWrite | FileShare.Delete`，杜绝后台保存原子替换时因瞬时读取触发 Sharing Violation。
-- **发布契约**：大功能与性能优化同步自增版本号；当前最新发布版本为 **v1.2.1**（安装包产物位于 `Release\Jot_Setup_v1.2.1.exe`）。
+## 3. 质量、验证与发布 (v1.3.0)
+- **验证**：自包含 Release 发布构建通过；无警告、无错误。命令行验证 M1 10/10、M2 6/6、M3 8/8。M3 包含真实缓存像素检查、自定义贴图多种明暗与透明度检查、合成器效果图构建检查，以及亮暗模式下 Win2D 实际像素输出对字形、留白、编辑器底色和蓝色选区的检查。用户在旧预览版实际截图中确认字迹仅均匀褪色、纹理几乎不可见；原因是该自定义贴图的旧磨损缓存最大 Alpha 仅 54/255、平均约 11/255。新版按贴图分位数归一化后，预计最大 255/255、平均约 56/255。新版窗口效果仍须可视检查。
+- **发布产物**：`Release\Publish\` 是此前版本，`Release\AgingPreview\` 是首个预览版；本次修正位于 `Release\AgingPreview-v2\`。
