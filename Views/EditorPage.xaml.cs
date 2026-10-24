@@ -801,6 +801,14 @@ namespace Journal.Views
 
         #endregion
 
+        private void InsertTimestampAccelerator_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+        {
+            args.Handled = true;
+            string liveText = GetCleanEditorText();
+            SyncViewModelContent(liveText);
+            ViewModel.InsertTimestamp();
+        }
+
         private void TriggerManualSave()
         {
             string liveText = GetCleanEditorText();
@@ -811,6 +819,12 @@ namespace Journal.Views
 
         private void ManualSaveButton_Click(object sender, RoutedEventArgs e)
         {
+            TriggerManualSave();
+        }
+
+        private void SaveAccelerator_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+        {
+            args.Handled = true;
             TriggerManualSave();
         }
 
