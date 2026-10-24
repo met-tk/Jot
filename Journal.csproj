@@ -16,7 +16,7 @@
     <WindowsAppSDKSelfContained Condition="'$(WindowsAppSDKSelfContained)' == ''">false</WindowsAppSDKSelfContained>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.4.0</Version>
+    <Version>1.4.1</Version>
     <ApplicationIcon>Assets\jot.ico</ApplicationIcon>
     <SatelliteResourceLanguages>zh-CN;zh-Hans;en-US</SatelliteResourceLanguages>
     <DefaultItemExcludes>$(DefaultItemExcludes);Release\**;Installer\**</DefaultItemExcludes>
