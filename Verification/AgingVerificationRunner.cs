@@ -1312,5 +1312,328 @@ namespace Journal.Verification
                 return 1;
             }
         }
+
+        public static int RunTextureStorageTests()
+        {
+            Console.WriteLine("=================================================================");
+            Console.WriteLine("    Jot - Custom Texture Autonomous Storage Verification Suite   ");
+            Console.WriteLine("=================================================================");
+            Console.WriteLine($"[INFO] Execution Time (UTC): {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
+            Console.WriteLine($"[INFO] Working Directory:    {Directory.GetCurrentDirectory()}");
+            Console.WriteLine();
+
+            int passed = 0;
+            int failed = 0;
+
+            void RunTest(string name, Action testAction)
+            {
+                try
+                {
+                    Console.Write($"[TEST] {name.PadRight(50)} ... ");
+                    testAction();
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine("PASS");
+                    Console.ResetColor();
+                    passed++;
+                }
+                catch (Exception ex)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("FAIL");
+                    Console.ResetColor();
+                    Console.WriteLine($"       Error: {ex.Message}");
+                    if (ex.InnerException != null)
+                    {
+                        Console.WriteLine($"       Inner: {ex.InnerException.Message}");
+                    }
+                    failed++;
+                }
+            }
+
+            byte[] validPngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+                0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+                0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+                0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41,
+                0x78, 0x9C, 0x63, 0x60, 0x60, 0x60, 0x60, 0x00,
+                0x00, 0x00, 0x05, 0x00, 0x01, 0xA7, 0x36, 0x01,
+                0xC7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+                0x44, 0xAE, 0x42, 0x60, 0x82
+            };
+
+            // TS1: 自定义贴图持久化存储与内容寻址去重
+            RunTest("TS1: Custom Texture Persistence & CAS Deduplication", () =>
+            {
+                string tempDir = Path.Combine(Path.GetTempPath(), $"Jot_TS1_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(tempDir);
+                try
+                {
+                    var storage = new AgingTextureStorageService(tempDir);
+                    string extFile = Path.Combine(tempDir, "my_custom_paper.png");
+                    File.WriteAllBytes(extFile, validPngBytes);
+
+                    string stored1 = storage.SaveCustomTexture(extFile, "paper");
+                    if (!File.Exists(stored1))
+                        throw new Exception($"Stored texture file not created: {stored1}");
+
+                    string fileName = Path.GetFileName(stored1);
+                    if (!fileName.StartsWith("paper_", StringComparison.OrdinalIgnoreCase))
+                        throw new Exception($"Expected prefix 'paper_', got: {fileName}");
+
+                    if (!fileName.EndsWith("my_custom_paper.png", StringComparison.OrdinalIgnoreCase))
+                        throw new Exception($"Expected safe suffix 'my_custom_paper.png', got: {fileName}");
+
+                    // 重复保存相同文件，必须命中去重，返回完全相同的路径
+                    string stored2 = storage.SaveCustomTexture(extFile, "paper");
+                    if (!string.Equals(stored1, stored2, StringComparison.OrdinalIgnoreCase))
+                        throw new Exception($"CAS deduplication failed: {stored1} != {stored2}");
+                }
+                finally
+                {
+                    try { Directory.Delete(tempDir, recursive: true); } catch { }
+                }
+            });
+
+            // TS2: 原外部文件移动/删除后的鲁棒性与防失效 (用户核心痛点验证)
+            RunTest("TS2: Resilience When External Source File Moved/Deleted", () =>
+            {
+                string tempDir = Path.Combine(Path.GetTempPath(), $"Jot_TS2_{Guid.NewGuid():N}");
+                string userDownloadsDir = Path.Combine(tempDir, "Downloads");
+                string appStorageDir = Path.Combine(tempDir, "AppData_Textures");
+                Directory.CreateDirectory(userDownloadsDir);
+                Directory.CreateDirectory(appStorageDir);
+
+                try
+                {
+                    var storage = new AgingTextureStorageService(appStorageDir);
+                    string downloadFile = Path.Combine(userDownloadsDir, "watermark.png");
+                    File.WriteAllBytes(downloadFile, validPngBytes);
+
+                    // 1. 用户导入贴图，系统完成自主持久化
+                    string internalStoredPath = storage.SaveCustomTexture(downloadFile, "paper");
+
+                    // 2. 模拟用户移动、重命名或删除了 Downloads 下的原文件
+                    File.Delete(downloadFile);
+                    if (File.Exists(downloadFile))
+                        throw new Exception("Source file was not successfully deleted");
+
+                    // 3. 验证通过内部路径依然可正确解析，不会降级回默认
+                    string resolved = AgingEngineService.ResolveTexturePath(internalStoredPath, isPaper: true);
+                    if (!File.Exists(resolved))
+                        throw new Exception($"Failed to resolve internally stored texture: {resolved}");
+
+                    if (!string.Equals(Path.GetFullPath(resolved), Path.GetFullPath(internalStoredPath), StringComparison.OrdinalIgnoreCase))
+                        throw new Exception($"Resolved path mismatch: {resolved} vs {internalStoredPath}");
+                }
+                finally
+                {
+                    try { Directory.Delete(tempDir, recursive: true); } catch { }
+                }
+            });
+
+            // TS3: 友好展示名称提取与脱敏
+            RunTest("TS3: User-Friendly Display Name Extraction", () =>
+            {
+                string defaultPaper = "内置经典纸纹";
+                string extracted1 = AgingTextureStorageService.GetDisplayName(
+                    @"C:\Data\Textures\paper_3a7b9c1d4e2f_watercolor_sheet.png", defaultPaper);
+                if (extracted1 != "watercolor_sheet.png")
+                    throw new Exception($"Display name extraction failed: expected 'watercolor_sheet.png', got '{extracted1}'");
+
+                string extracted2 = AgingTextureStorageService.GetDisplayName(
+                    @"C:\Data\Textures\ink_998877665544_dark_grunge.png", defaultPaper);
+                if (extracted2 != "dark_grunge.png")
+                    throw new Exception($"Display name extraction failed: expected 'dark_grunge.png', got '{extracted2}'");
+
+                string extractedDefault = AgingTextureStorageService.GetDisplayName(null, defaultPaper);
+                if (extractedDefault != defaultPaper)
+                    throw new Exception($"Default display name mismatch: expected '{defaultPaper}', got '{extractedDefault}'");
+            });
+
+            // TS4: 历史配置静默自愈与平滑迁移
+            RunTest("TS4: Legacy Configuration Migration & Broken Path Self-Healing", () =>
+            {
+                string tempDir = Path.Combine(Path.GetTempPath(), $"Jot_TS4_{Guid.NewGuid():N}");
+                string externalDir = Path.Combine(tempDir, "External");
+                string internalDir = Path.Combine(tempDir, "InternalTextures");
+                Directory.CreateDirectory(externalDir);
+                Directory.CreateDirectory(internalDir);
+
+                try
+                {
+                    var storage = new AgingTextureStorageService(internalDir);
+                    string externalFile = Path.Combine(externalDir, "old_paper.png");
+                    File.WriteAllBytes(externalFile, validPngBytes);
+
+                    // 1. 迁移存在的外部文件
+                    string? migrated = storage.MigrateLegacyTextureIfNeeded(externalFile, "paper");
+                    if (string.IsNullOrWhiteSpace(migrated) || !File.Exists(migrated))
+                        throw new Exception("Failed to migrate existing external file");
+
+                    if (!migrated.StartsWith(internalDir, StringComparison.OrdinalIgnoreCase))
+                        throw new Exception($"Migrated path not inside internal storage: {migrated}");
+
+                    // 2. 外部文件已丢失，自愈重置为 null（安全降级为默认）
+                    string missingExternal = Path.Combine(externalDir, "non_existent_old.png");
+                    string? healed = storage.MigrateLegacyTextureIfNeeded(missingExternal, "paper");
+                    if (healed != null)
+                        throw new Exception($"Missing external file should heal to null, got: {healed}");
+
+                    // 3. 已位于内部目录的文件无需重复迁移
+                    string? noop = storage.MigrateLegacyTextureIfNeeded(migrated, "paper");
+                    if (!string.Equals(noop, migrated, StringComparison.OrdinalIgnoreCase))
+                        throw new Exception($"In-place texture should not change: {noop} != {migrated}");
+                }
+                finally
+                {
+                    try { Directory.Delete(tempDir, recursive: true); } catch { }
+                }
+            });
+
+            // TS5: 孤儿母本垃圾回收 (双槽位引用保护)
+            RunTest("TS5: Safe Orphan Custom Texture Garbage Collection", () =>
+            {
+                string tempDir = Path.Combine(Path.GetTempPath(), $"Jot_TS5_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(tempDir);
+
+                try
+                {
+                    var storage = new AgingTextureStorageService(tempDir);
+                    string srcA = Path.Combine(tempDir, "source_a.png");
+                    string srcB = Path.Combine(tempDir, "source_b.png");
+                    string srcC = Path.Combine(tempDir, "source_c.png");
+                    File.WriteAllBytes(srcA, validPngBytes);
+                    File.WriteAllBytes(srcB, validPngBytes);
+                    File.WriteAllBytes(srcC, validPngBytes);
+
+                    string storedPaper = storage.SaveCustomTexture(srcA, "paper");
+                    string storedInk = storage.SaveCustomTexture(srcB, "ink");
+                    string orphan = storage.SaveCustomTexture(srcC, "paper");
+
+                    // 模拟 orphan 未被当前纸张与墨水槽位引用
+                    storage.CleanupOrphanTextures(storedPaper, storedInk);
+
+                    if (!File.Exists(storedPaper))
+                        throw new Exception("Active paper texture was mistakenly deleted");
+                    if (!File.Exists(storedInk))
+                        throw new Exception("Active ink texture was mistakenly deleted");
+                    if (File.Exists(orphan))
+                        throw new Exception("Orphan texture was not cleaned up");
+                }
+                finally
+                {
+                    try { Directory.Delete(tempDir, recursive: true); } catch { }
+                }
+            });
+
+            // TS6: 清理渲染缓存时不影响持久化母本资产
+            RunTest("TS6: Cache Purging Leaves Persistent Textures Intact", () =>
+            {
+                string tempDir = Path.Combine(Path.GetTempPath(), $"Jot_TS6_{Guid.NewGuid():N}");
+                string cacheDir = Path.Combine(tempDir, "Cache");
+                string textureDir = Path.Combine(tempDir, "Textures");
+                Directory.CreateDirectory(cacheDir);
+                Directory.CreateDirectory(textureDir);
+
+                try
+                {
+                    var storage = new AgingTextureStorageService(textureDir);
+                    var cache = new AgingCacheService(cacheDir);
+
+                    string src = Path.Combine(tempDir, "input.png");
+                    File.WriteAllBytes(src, validPngBytes);
+                    string persistentTexture = storage.SaveCustomTexture(src, "paper");
+
+                    // 在缓存目录下生成一个派生缓存
+                    string cacheKey = cache.ComputeCacheKey(persistentTexture, "gray");
+                    string cachePath = cache.GetCachedFilePath(cacheKey, "gray");
+                    File.WriteAllBytes(cachePath, validPngBytes);
+
+                    // 执行清空渲染缓存
+                    cache.ClearAllDiskCaches();
+
+                    // 断言：缓存文件被清理，但母本纹理完好无损！
+                    if (File.Exists(cachePath))
+                        throw new Exception("Cache file was not cleared");
+
+                    if (!File.Exists(persistentTexture))
+                        throw new Exception("Persistent custom texture was mistakenly purged by ClearAllDiskCaches!");
+                }
+                finally
+                {
+                    try { Directory.Delete(tempDir, recursive: true); } catch { }
+                }
+            });
+
+            // TS7: 格式与合法性校验拦截 (0 字节、非法扩展名、损坏文件)
+            RunTest("TS7: Image Format & Corruption Guardrails", () =>
+            {
+                string tempDir = Path.Combine(Path.GetTempPath(), $"Jot_TS7_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(tempDir);
+
+                try
+                {
+                    var storage = new AgingTextureStorageService(tempDir);
+
+                    // 1. 0 字节文件
+                    string zeroFile = Path.Combine(tempDir, "zero.png");
+                    File.WriteAllBytes(zeroFile, Array.Empty<byte>());
+                    bool zeroRejected = false;
+                    try { storage.SaveCustomTexture(zeroFile, "paper"); }
+                    catch (InvalidDataException) { zeroRejected = true; }
+                    if (!zeroRejected) throw new Exception("0-byte file was not rejected with InvalidDataException");
+
+                    // 2. 伪装成 png 的文本文件
+                    string fakePng = Path.Combine(tempDir, "fake.png");
+                    File.WriteAllText(fakePng, "not a png image content");
+                    bool fakeRejected = false;
+                    try { storage.SaveCustomTexture(fakePng, "paper"); }
+                    catch (InvalidDataException) { fakeRejected = true; }
+                    if (!fakeRejected) throw new Exception("Fake PNG file was not rejected with InvalidDataException");
+
+                    // 3. 不受支持的格式扩展名
+                    string txtFile = Path.Combine(tempDir, "notes.txt");
+                    File.WriteAllText(txtFile, "plain text");
+                    bool extRejected = false;
+                    try { storage.SaveCustomTexture(txtFile, "paper"); }
+                    catch (NotSupportedException) { extRejected = true; }
+                    if (!extRejected) throw new Exception("Unsupported file extension was not rejected with NotSupportedException");
+
+                    // 4. 非法槽位前缀防注入
+                    string validPng = Path.Combine(tempDir, "valid.png");
+                    File.WriteAllBytes(validPng, validPngBytes);
+                    bool slotRejected = false;
+                    try { storage.SaveCustomTexture(validPng, "../../bad"); }
+                    catch (ArgumentException) { slotRejected = true; }
+                    if (!slotRejected) throw new Exception("Invalid slot prefix was not rejected with ArgumentException");
+                }
+                finally
+                {
+                    try { Directory.Delete(tempDir, recursive: true); } catch { }
+                }
+            });
+
+            Console.WriteLine();
+            Console.WriteLine("-----------------------------------------------------------------");
+            Console.WriteLine($"[SUMMARY] Total Tests: {passed + failed} | Passed: {passed} | Failed: {failed}");
+            Console.WriteLine("-----------------------------------------------------------------");
+
+            if (failed == 0)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine(">>> ALL TEXTURE STORAGE TESTS PASSED SUCCESSFULLY! (100% PASS) <<<");
+                Console.ResetColor();
+                return 0;
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($">>> TEXTURE STORAGE TESTS FAILED: {failed} test(s) failed. <<<");
+                Console.ResetColor();
+                return 1;
+            }
+        }
     }
 }

@@ -20,6 +20,8 @@
             <Border MinHeight="20" MinWidth="20" CornerRadius="4"
                     HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                     Background="{x:Bind DayBackground}"
+                    BorderBrush="{x:Bind DayBorderBrush}"
+                    BorderThickness="{x:Bind DayBorderThickness}"
                     PointerPressed="DayItem_PointerPressed">
                 <ToolTipService.ToolTip>
                     <ToolTip MaxWidth="320" Padding="12,10">
@@ -340,9 +342,11 @@
                                                         <TextBlock Text="{x:Bind WordBadgeText}" FontSize="10" FontWeight="SemiBold" Foreground="{ThemeResource AppAccentTextBrush}"/>
                                                     </Border>
 
-                                                    <!-- 日期号 -->
+                                                    <!-- 日期号：今日以内嵌主题色边框标识，背景仅呈现记录热力 -->
                                                     <Border Grid.Column="1" CornerRadius="3" Padding="4,1" HorizontalAlignment="Right"
-                                                            Background="{x:Bind DayBackground}">
+                                                            Background="{x:Bind DayBackground}"
+                                                            BorderBrush="{x:Bind DayBorderBrush}"
+                                                            BorderThickness="{x:Bind DayBorderThickness}">
                                                         <TextBlock Text="{x:Bind DayNumber}" FontSize="11"
                                                                    FontWeight="{x:Bind DayFontWeight}"
                                                                    Foreground="{x:Bind DayForeground}"/>
@@ -495,25 +499,6 @@
                                       IsTodayHighlighted="True"
                                       CalendarViewDayItemChanging="DayAuxiliaryCalendarView_CalendarViewDayItemChanging"
                                       SelectedDatesChanged="DayAuxiliaryCalendarView_SelectedDatesChanged"/>
-
-                        <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                CornerRadius="6" Padding="12,10">
-                            <StackPanel Spacing="6">
-                                <TextBlock x:Name="DayAuxDateStatusText"
-                                           Text="点击日期查看日记"
-                                           FontSize="12"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                           TextWrapping="Wrap"/>
-                                <Button x:Name="DayAuxWriteButton"
-                                        Content="编辑此篇日记"
-                                        Style="{ThemeResource AccentButtonStyle}"
-                                        HorizontalAlignment="Stretch"
-                                        Padding="10,5"
-                                        FontSize="12"
-                                        Visibility="Collapsed"
-                                        Click="EditCurrentDayDiary_Click"/>
-                            </StackPanel>
-                        </Border>
                     </StackPanel>
                 </Border>
             </Grid>

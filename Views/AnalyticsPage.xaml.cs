@@ -116,6 +116,35 @@ namespace Journal.Views
             }
         }
 
+        private async void LengthTierItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement { Tag: LengthTierItem tier })
+            {
+                await ViewModel.SearchByLengthTierAsync(tier);
+            }
+        }
+
+        private async void HourBar_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement { Tag: HourlyHeatItem hourItem })
+            {
+                await ViewModel.SearchByHourAsync(hourItem.Hour);
+            }
+        }
+
+        private async void HourRecordItem_PointerPressed(object sender, PointerRoutedEventArgs e)
+        {
+            var point = e.GetCurrentPoint(sender as UIElement);
+            if (!point.Properties.IsLeftButtonPressed) return;
+
+            if (sender is FrameworkElement { Tag: HourRecordItem record })
+            {
+                e.Handled = true;
+                await ViewModel.OpenReadingDateAsync(record.Date);
+                SafeSetCalendarDisplayDate(record.Date);
+            }
+        }
+
         private async void WordDiaryCard_PointerPressed(object sender, PointerRoutedEventArgs e)
         {
             var point = e.GetCurrentPoint(sender as UIElement);

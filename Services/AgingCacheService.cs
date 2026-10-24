@@ -188,7 +188,7 @@ namespace Journal.Services
             try
             {
                 var dir = new DirectoryInfo(_cacheDirectoryPath);
-                foreach (var file in dir.EnumerateFiles("*", s_safeEnumerationOptions))
+                foreach (var file in dir.EnumerateFiles("*.png", s_safeEnumerationOptions))
                 {
                     try
                     {
@@ -213,7 +213,7 @@ namespace Journal.Services
             try
             {
                 var dir = new DirectoryInfo(_cacheDirectoryPath);
-                foreach (var file in dir.EnumerateFiles("*", s_safeEnumerationOptions))
+                foreach (var file in dir.EnumerateFiles("*.png", s_safeEnumerationOptions))
                 {
                     SafeDeleteFile(file);
                 }

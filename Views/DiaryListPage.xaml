@@ -94,7 +94,7 @@
 
                 <!-- 批量选择与操作快捷按钮 (置于横向平滑滚动容器中，确保窄屏下完整可达不被截断) -->
                 <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
-                              HorizontalAlignment="Right">
+                              HorizontalAlignment="Left">
                     <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="0,0,2,0">
                         <Button Content="全选" FontSize="12" Padding="10,4"
                                 Style="{ThemeResource DefaultButtonStyle}" CornerRadius="6"
@@ -239,11 +239,12 @@
                                                                 <ColumnDefinition Width="*"/>
                                                             </Grid.ColumnDefinitions>
 
-                                                            <!-- 多选复选框 -->
+                                                            <!-- 多选复选框 (WinUI 默认 MinWidth=120 会撑出大片空白列，压缩至方格实际宽度) -->
                                                             <CheckBox Grid.Column="0"
+                                                                      MinWidth="0"
                                                                       IsChecked="{x:Bind IsSelected, Mode=TwoWay}"
                                                                       Visibility="{x:Bind local:DiaryListPage.GetVisibility(IsMultiSelectVisible), Mode=OneWay}"
-                                                                      VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                                                      VerticalAlignment="Center" Margin="0,0,2,0"/>
 
                                                             <!-- 左侧：大字号日期指示胶囊 -->
                                                             <Border Grid.Column="1"

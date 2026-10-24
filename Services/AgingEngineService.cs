@@ -288,9 +288,27 @@ namespace Journal.Services
         }
         public static string ResolveTexturePath(string? customPath, bool isPaper)
         {
-            if (!string.IsNullOrWhiteSpace(customPath) && File.Exists(customPath))
+            if (!string.IsNullOrWhiteSpace(customPath))
             {
-                return Path.GetFullPath(customPath);
+                if (File.Exists(customPath))
+                {
+                    return Path.GetFullPath(customPath);
+                }
+
+                try
+                {
+                    string storageDir = AgingTextureStorageService.Instance.StorageDirectoryPath;
+                    string safeFileName = Path.GetFileName(customPath);
+                    string inStorage = Path.Combine(storageDir, safeFileName);
+                    if (File.Exists(inStorage))
+                    {
+                        return Path.GetFullPath(inStorage);
+                    }
+                }
+                catch
+                {
+                    // 忽略路径解析异常，平滑降级
+                }
             }
 
             string defaultFileName = isPaper ? AgingConstants.DefaultPaperTextureFileName : AgingConstants.DefaultInkTextureFileName;

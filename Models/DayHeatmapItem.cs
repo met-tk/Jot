@@ -46,7 +46,7 @@ namespace Journal.Models
             }
         }
 
-        private static SolidColorBrush? s_todayBgBrush;
+        private static SolidColorBrush? s_todayBorderBrush;
         private static SolidColorBrush? s_transparentBgBrush;
         private static SolidColorBrush? s_level1BgBrush;
         private static SolidColorBrush? s_level2BgBrush;
@@ -63,7 +63,7 @@ namespace Journal.Models
             _isDarkTheme = isDark;
             try
             {
-                var todayColor = Color.FromArgb(235, accent.R, accent.G, accent.B);
+                var todayBorderColor = accent;
                 var l1Color = Color.FromArgb(isDark ? (byte)90 : (byte)50, accent.R, accent.G, accent.B);
                 var l2Color = Color.FromArgb(isDark ? (byte)140 : (byte)100, accent.R, accent.G, accent.B);
                 var l3Color = Color.FromArgb(isDark ? (byte)195 : (byte)165, accent.R, accent.G, accent.B);
@@ -73,7 +73,7 @@ namespace Journal.Models
                 var activeLightFg = isDark ? Color.FromArgb(255, 240, 240, 240) : Color.FromArgb(255, 20, 20, 20);
                 var normalFg = isDark ? Color.FromArgb(220, 230, 230, 230) : Color.FromArgb(220, 40, 40, 40);
 
-                if (s_todayBgBrush == null) s_todayBgBrush = new SolidColorBrush(todayColor); else s_todayBgBrush.Color = todayColor;
+                if (s_todayBorderBrush == null) s_todayBorderBrush = new SolidColorBrush(todayBorderColor); else s_todayBorderBrush.Color = todayBorderColor;
                 if (s_transparentBgBrush == null) s_transparentBgBrush = new SolidColorBrush(Colors.Transparent);
                 if (s_level1BgBrush == null) s_level1BgBrush = new SolidColorBrush(l1Color); else s_level1BgBrush.Color = l1Color;
                 if (s_level2BgBrush == null) s_level2BgBrush = new SolidColorBrush(l2Color); else s_level2BgBrush.Color = l2Color;
@@ -93,7 +93,7 @@ namespace Journal.Models
 
         private static void EnsureBrushesInitialized()
         {
-            if (s_todayBgBrush == null)
+            if (s_todayBorderBrush == null || s_level1BgBrush == null)
             {
                 UpdateSharedThemeBrushes(Journal.Services.AmbianceThemeEngine.CurrentPalette.AccentColor, _isDarkTheme);
             }
@@ -104,7 +104,7 @@ namespace Journal.Models
             get
             {
                 EnsureBrushesInitialized();
-                if (IsToday) return s_todayBgBrush!;
+                // 今日不再使用纯色填充（避免与记录热力色混淆），改由 DayBorderBrush 内嵌边框标识，背景只承载热力信息
                 if (!HasActivity) return s_transparentBgBrush!;
 
                 if (WordCount < 100) return s_level1BgBrush!;
@@ -114,12 +114,24 @@ namespace Journal.Models
             }
         }
 
+        public Brush DayBorderBrush
+        {
+            get
+            {
+                EnsureBrushesInitialized();
+                return IsToday ? s_todayBorderBrush! : s_transparentBgBrush!;
+            }
+        }
+
+        public Thickness DayBorderThickness => IsToday ? new Thickness(1.5) : default;
+
         public Brush DayForeground
         {
             get
             {
                 EnsureBrushesInitialized();
-                if (IsToday) return s_whiteFgBrush!;
+                // 今日无记录：以主题色描边 + 主题色数字突出，不再依赖纯色底
+                if (IsToday && !HasActivity) return s_todayBorderBrush!;
                 if (!IsCurrentMonth) return s_otherMonthFgBrush!;
 
                 if (HasActivity)

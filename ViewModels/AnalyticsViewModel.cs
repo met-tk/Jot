@@ -21,7 +21,8 @@ namespace Journal.ViewModels
     {
         Overview = 0,
         WordList = 1,
-        Reading = 2
+        Reading = 2,
+        HourRecords = 3
     }
 
     public class WordCloudItem
@@ -53,7 +54,21 @@ namespace Journal.ViewModels
         public string RangeLabel { get; set; } = string.Empty;
         public int Count { get; set; }
         public double Percentage { get; set; }
+        public int MinWords { get; set; }
+        public int MaxWords { get; set; } = int.MaxValue;
         public string ToolTipText => $"{TierName} ({RangeLabel})：共 {Count} 篇 ({Percentage:F1}%)";
+    }
+
+    /// <summary>
+    /// 时段穿透命中的一条具体记录（时间戳片段）：仅承载该条记录的文字与所属日期，而非整篇日记
+    /// </summary>
+    public class HourRecordItem
+    {
+        public DateTime Date { get; set; }
+        public string DateLabel => Date.ToString("MM月dd日");
+        public string WeekLabel => Date.ToString("ddd");
+        public string TimeText { get; set; } = string.Empty;
+        public string Snippet { get; set; } = string.Empty;
     }
 
     public partial class AnalyticsViewModel : ObservableObject
@@ -131,12 +146,14 @@ namespace Journal.ViewModels
         public bool IsOverviewMode => ViewMode == AnalyticsViewMode.Overview;
         public bool IsWordListMode => ViewMode == AnalyticsViewMode.WordList;
         public bool IsReadingMode => ViewMode == AnalyticsViewMode.Reading;
+        public bool IsHourRecordsMode => ViewMode == AnalyticsViewMode.HourRecords;
 
         partial void OnViewModeChanged(AnalyticsViewMode value)
         {
             OnPropertyChanged(nameof(IsOverviewMode));
             OnPropertyChanged(nameof(IsWordListMode));
             OnPropertyChanged(nameof(IsReadingMode));
+            OnPropertyChanged(nameof(IsHourRecordsMode));
         }
 
         [ObservableProperty]
@@ -176,7 +193,34 @@ namespace Journal.ViewModels
         [ObservableProperty]
         private ObservableCollection<DiaryCardItem> _matchedDiaries = new();
 
+        // 匹配列表标头三段式文案（关键词与篇幅梯队穿透共用同一列表视图）
+        [ObservableProperty]
+        private string _matchedTitlePrefix = "关键词「";
+
+        [ObservableProperty]
+        private string _matchedTitleHighlight = string.Empty;
+
+        [ObservableProperty]
+        private string _matchedTitleSuffix = "」相关日记";
+
         #endregion
+
+        #region 时段命中记录穿透状态
+
+        [ObservableProperty]
+        private string _selectedHourTitle = string.Empty;
+
+        [ObservableProperty]
+        private ObservableCollection<HourRecordItem> _hourRecords = new();
+
+        [ObservableProperty]
+        private int _hourRecordCount = 0;
+
+        #endregion
+
+        // 单日阅读返回目标：记录打开阅读前的列表层级（词云列表 / 时段记录 / 概览）
+        [ObservableProperty]
+        private AnalyticsViewMode _readingReturnMode = AnalyticsViewMode.Overview;
 
         #region 只读日记预览状态
 
@@ -339,11 +383,11 @@ namespace Journal.ViewModels
 
             var tiers = new List<LengthTierItem>(5)
             {
-                new() { TierName = "短篇", RangeLabel = "< 100 字", Count = micro, Percentage = (double)micro / total * 100 },
-                new() { TierName = "中短篇", RangeLabel = "100 - 300 字", Count = brief, Percentage = (double)brief / total * 100 },
-                new() { TierName = "中篇", RangeLabel = "300 - 800 字", Count = medium, Percentage = (double)medium / total * 100 },
-                new() { TierName = "长篇", RangeLabel = "800 - 1500 字", Count = longForm, Percentage = (double)longForm / total * 100 },
-                new() { TierName = "超长篇", RangeLabel = "≥ 1500 字", Count = epic, Percentage = (double)epic / total * 100 }
+                new() { TierName = "短篇", RangeLabel = "< 100 字", Count = micro, Percentage = (double)micro / total * 100, MinWords = 0, MaxWords = 100 },
+                new() { TierName = "中短篇", RangeLabel = "100 - 300 字", Count = brief, Percentage = (double)brief / total * 100, MinWords = 100, MaxWords = 300 },
+                new() { TierName = "中篇", RangeLabel = "300 - 800 字", Count = medium, Percentage = (double)medium / total * 100, MinWords = 300, MaxWords = 800 },
+                new() { TierName = "长篇", RangeLabel = "800 - 1500 字", Count = longForm, Percentage = (double)longForm / total * 100, MinWords = 800, MaxWords = 1500 },
+                new() { TierName = "超长篇", RangeLabel = "≥ 1500 字", Count = epic, Percentage = (double)epic / total * 100, MinWords = 1500, MaxWords = int.MaxValue }
             };
 
             LengthTiers = new ObservableCollection<LengthTierItem>(tiers);
@@ -635,6 +679,9 @@ namespace Journal.ViewModels
         {
             if (string.IsNullOrWhiteSpace(word)) return;
             SelectedWord = word;
+            MatchedTitlePrefix = "关键词「";
+            MatchedTitleHighlight = word;
+            MatchedTitleSuffix = "」相关日记";
             MatchedDiaries.Clear();
 
             var allEntries = await _index.GetAllEntriesAsync();
@@ -698,6 +745,118 @@ namespace Journal.ViewModels
             ViewMode = AnalyticsViewMode.WordList;
         }
 
+        /// <summary>
+        /// 篇幅梯队穿透：列出指定字数区间内的全部日记（复用词云匹配列表视图）
+        /// </summary>
+        [RelayCommand]
+        public async Task SearchByLengthTierAsync(LengthTierItem? tier)
+        {
+            if (tier == null) return;
+
+            SelectedWord = string.Empty;
+            MatchedTitlePrefix = "篇幅「";
+            MatchedTitleHighlight = $"{tier.TierName} {tier.RangeLabel}";
+            MatchedTitleSuffix = "」的日记";
+
+            var allEntries = await _index.GetAllEntriesAsync();
+            var matched = allEntries
+                .Where(e => e.WordCount > 0 && !string.IsNullOrWhiteSpace(e.Title) && e.Title != "（今日静默，暂无文字）")
+                .Where(e => e.WordCount >= tier.MinWords && e.WordCount < tier.MaxWords)
+                .OrderByDescending(e => e.Date)
+                .Select(e => new DiaryCardItem
+                {
+                    Id = e.Id,
+                    Date = e.Date,
+                    Title = e.Title,
+                    Excerpt = e.Excerpt,
+                    WordCount = e.WordCount,
+                    TimestampsCount = e.TimestampsCount,
+                    FilePath = e.FullPath,
+                    RawEntry = e
+                })
+                .ToList();
+
+            MatchedDiaries = new ObservableCollection<DiaryCardItem>(matched);
+            MatchedCount = MatchedDiaries.Count;
+            ViewMode = AnalyticsViewMode.WordList;
+        }
+
+        /// <summary>
+        /// 时段穿透：提取指定小时命中的全部时间戳记录（仅记录片段 + 所属日期，不展开整篇日记）
+        /// </summary>
+        [RelayCommand]
+        public async Task SearchByHourAsync(int hour)
+        {
+            if (hour < 0 || hour > 23) return;
+            SelectedWord = string.Empty;
+            SelectedHourTitle = $"{hour:D2}:00 ~ {hour:D2}:59";
+
+            var allEntries = await _index.GetAllEntriesAsync();
+            var validEntries = allEntries
+                .Where(e => e.WordCount > 0 && !string.IsNullOrWhiteSpace(e.Title) && e.Title != "（今日静默，暂无文字）")
+                .OrderByDescending(e => e.Date)
+                .ToList();
+
+            var records = new List<HourRecordItem>();
+            foreach (var entry in validEntries)
+            {
+                if (!_cachedContentMap.TryGetValue(entry.Date.Date, out string? content) || string.IsNullOrEmpty(content))
+                {
+                    content = await SafeReadDiaryAsync(entry.Date);
+                }
+                if (string.IsNullOrEmpty(content) || !content.Contains('[')) continue;
+
+                var matches = s_hourlyTimestampRegex.Matches(content);
+                if (matches.Count == 0) continue;
+
+                for (int i = 0; i < matches.Count; i++)
+                {
+                    var m = matches[i];
+                    if (!int.TryParse(m.Groups[1].Value, out int h) || h != hour) continue;
+
+                    // 记录正文 = 本时间戳之后、下一时间戳之前的部分
+                    int start = m.Index + m.Length;
+                    int end = (i + 1 < matches.Count) ? matches[i + 1].Index : content.Length;
+
+                    records.Add(new HourRecordItem
+                    {
+                        Date = entry.Date,
+                        TimeText = ExtractTimeText(m.Value),
+                        Snippet = BuildRecordSnippet(content, start, end)
+                    });
+                }
+            }
+
+            HourRecords = new ObservableCollection<HourRecordItem>(records);
+            HourRecordCount = records.Count;
+            ViewMode = AnalyticsViewMode.HourRecords;
+        }
+
+        private static string ExtractTimeText(string marker)
+        {
+            string inner = marker.Trim('[', ']').Trim();
+            int sp = inner.LastIndexOf(' ');
+            string time = sp >= 0 ? inner[(sp + 1)..] : inner;
+            return time.Length == 8 && time[2] == ':' ? time : inner;
+        }
+
+        private static string BuildRecordSnippet(string content, int start, int end)
+        {
+            if (end <= start)
+            {
+                return "（此条记录无附加文字）";
+            }
+
+            string snippet = content[start..end]
+                .Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ')
+                .Trim();
+            if (snippet.Length > 160)
+            {
+                snippet = snippet[..160].TrimEnd() + "...";
+            }
+            return string.IsNullOrEmpty(snippet) ? "（此条记录无附加文字）" : snippet;
+        }
+
         private async Task<string> SafeReadDiaryAsync(DateTime date)
         {
             try
@@ -741,6 +900,10 @@ namespace Journal.ViewModels
         public async Task OpenReadingDiaryAsync(DiaryCardItem? card)
         {
             if (card == null) return;
+            if (ViewMode != AnalyticsViewMode.Reading)
+            {
+                ReadingReturnMode = ViewMode;
+            }
             ReadingCard = card;
             ReadingDate = card.Date;
             ReadingDateDisplay = card.Date.ToString("yyyy年MM月dd日 dddd");
@@ -765,6 +928,7 @@ namespace Journal.ViewModels
 
         public async Task OpenReadingDateAsync(DateTime date)
         {
+            SelectedWord = string.Empty;
             var entry = await _index.GetEntryAsync(date);
             if (entry != null && entry.WordCount > 0)
             {
@@ -786,13 +950,17 @@ namespace Journal.ViewModels
         [RelayCommand]
         public void CloseReading()
         {
-            ViewMode = !string.IsNullOrEmpty(SelectedWord)
-                ? AnalyticsViewMode.WordList
-                : AnalyticsViewMode.Overview;
+            ViewMode = ReadingReturnMode;
         }
 
         [RelayCommand]
         public void CloseWordList()
+        {
+            ViewMode = AnalyticsViewMode.Overview;
+        }
+
+        [RelayCommand]
+        public void CloseHourRecords()
         {
             ViewMode = AnalyticsViewMode.Overview;
         }

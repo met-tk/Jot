@@ -130,7 +130,7 @@ namespace Journal
 
             AppSettingsService.Instance.SettingsChanged += OnAppSettingsChanged;
 
-            // 5. 挂载窗口退出前确认拦截弹窗
+            // 5. 挂载窗口退出前拦截：仅当存在未保存内容时弹出“保存后退出”确认，否则静默退出
             SetupWindowClosing();
 
             // 6. 挂载 Win32 消息子类化拦截 (WM_APPCOMMAND / WM_XBUTTONUP 鼠标侧键兜底)
@@ -256,15 +256,20 @@ namespace Journal
                     var editor = Views.ShellPage.Current?.CurrentEditorPage;
                     bool hasUnsaved = editor?.ViewModel.HasUnsavedChanges ?? false;
 
+                    // 所有内容均已保存：退出不会丢失任何数据，直接提交窗口状态并关闭，不弹确认框
+                    if (!hasUnsaved)
+                    {
+                        await CommitAndCloseAsync();
+                        return;
+                    }
+
                     var dialog = new ContentDialog
                     {
                         XamlRoot = this.Content.XamlRoot,
                         Title = "退出 Jot 确认",
-                        Content = hasUnsaved
-                            ? "检测到当前有正在编辑或尚未保存的记录。是否保存记录后退出？"
-                            : "确定要退出 Jot 吗？愿今日所思所悟皆有所安。",
-                        PrimaryButtonText = hasUnsaved ? "保存并退出" : "确定退出",
-                        SecondaryButtonText = hasUnsaved ? "不保存退出" : null,
+                        Content = "检测到当前有正在编辑或尚未保存的记录。是否保存记录后退出？",
+                        PrimaryButtonText = "保存并退出",
+                        SecondaryButtonText = "不保存退出",
                         CloseButtonText = "继续停留在软件",
                         DefaultButton = ContentDialogButton.Primary
                     };
@@ -273,7 +278,7 @@ namespace Journal
                     var result = await dialog.ShowAsync();
                     if (result == ContentDialogResult.Primary || result == ContentDialogResult.Secondary)
                     {
-                        if (result == ContentDialogResult.Primary && editor != null && hasUnsaved)
+                        if (result == ContentDialogResult.Primary && editor != null)
                         {
                             await editor.FlushAndSaveCurrentAsync();
                         }

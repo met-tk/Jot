@@ -106,6 +106,9 @@ namespace Journal.ViewModels
         private readonly SemaphoreSlim _refreshSemaphore = new(1, 1);
         private bool _suppressAutoRefresh;
 
+        // 进入日视图前的来源层级：回退时原路返回（年视图进入则退回年视图，而非固定退回月视图）
+        private CalendarViewMode _dayViewSourceMode = CalendarViewMode.MonthDetail;
+
         public void Subscribe()
         {
             _index.DataChanged -= OnDataChanged;
@@ -175,7 +178,7 @@ namespace Journal.ViewModels
                 case CalendarViewMode.DayDetail:
                     HeaderTitle = $"{SelectedDate:yyyy年MM月dd日}";
                     IsUpperLevelButtonVisible = true;
-                    UpperLevelButtonText = "月视图";
+                    UpperLevelButtonText = _dayViewSourceMode == CalendarViewMode.YearOverview ? "年视图" : "月视图";
                     PrevPeriodTooltip = "前一天";
                     NextPeriodTooltip = "后一天";
                     ViewToggleText = "年视图";
@@ -368,6 +371,11 @@ namespace Journal.ViewModels
         [RelayCommand]
         public async Task DrillDownToDayAsync(DateTime date)
         {
+            // 日视图内切换日期（前后翻日、辅助日历另选一天）不覆盖来源记录
+            if (ViewMode != CalendarViewMode.DayDetail)
+            {
+                _dayViewSourceMode = ViewMode;
+            }
             CurrentYear = date.Year;
             CurrentMonth = date.Month;
             SelectedDate = date;
@@ -380,7 +388,7 @@ namespace Journal.ViewModels
         {
             if (ViewMode == CalendarViewMode.DayDetail)
             {
-                ViewMode = CalendarViewMode.MonthDetail;
+                ViewMode = _dayViewSourceMode;
                 await RefreshDataAsync();
             }
             else if (ViewMode == CalendarViewMode.MonthDetail)

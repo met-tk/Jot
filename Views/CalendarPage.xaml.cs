@@ -318,22 +318,6 @@ namespace Journal.Views
                     DayAuxiliaryCalendarView.SelectedDates.Clear();
                     DayAuxiliaryCalendarView.SelectedDates.Add(new DateTimeOffset(target));
                 }
-
-                if (DayAuxDateStatusText != null && DayAuxWriteButton != null)
-                {
-                    if (ViewModel.ActiveDates.Contains(target))
-                    {
-                        DayAuxDateStatusText.Text = $"{target:yyyy年MM月dd日} 已有日记";
-                        DayAuxWriteButton.Content = "编辑此篇日记";
-                        DayAuxWriteButton.Visibility = Visibility.Visible;
-                    }
-                    else
-                    {
-                        DayAuxDateStatusText.Text = $"{target:yyyy年MM月dd日} 暂无日记";
-                        DayAuxWriteButton.Content = "为这天新建日记";
-                        DayAuxWriteButton.Visibility = Visibility.Visible;
-                    }
-                }
             }
             catch { }
             finally

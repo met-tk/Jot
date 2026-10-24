@@ -114,7 +114,7 @@ namespace Journal.ViewModels
         private string _storageDirectoryPath = string.Empty;
 
         [ObservableProperty]
-        private string _appVersionText = "Jot v1.3.0";
+        private string _appVersionText = "Jot v1.3.1";
 
         // 岁月沉淀拟物渲染系统配置项
         [ObservableProperty]
@@ -575,12 +575,14 @@ namespace Journal.ViewModels
                 var file = await picker.PickSingleFileAsync();
                 if (file != null && File.Exists(file.Path))
                 {
-                    await AgingEngineService.Instance.GetPreprocessedPaperTexturePathAsync(file.Path, isDarkMode: false);
-                    AgingPaperTexturePath = file.Path;
-                    _settingsService.Update(s => s.AgingPaperTexturePath = file.Path);
+                    string storedPath = await AgingTextureStorageService.Instance.SaveCustomTextureAsync(file.Path, "paper");
+                    await AgingEngineService.Instance.GetPreprocessedPaperTexturePathAsync(storedPath, isDarkMode: false);
+                    AgingPaperTexturePath = storedPath;
+                    _settingsService.Update(s => s.AgingPaperTexturePath = storedPath);
                     UpdateAgingTextureDisplayNames();
                     RefreshAgingCacheSize();
-                    AgingStatusMessage = "已成功载入自定义纸张纹理！";
+                    AgingTextureStorageService.Instance.CleanupOrphanTextures(storedPath, AgingInkTexturePath);
+                    AgingStatusMessage = "已成功载入并持久化存储自定义纸张纹理！";
                 }
             }
             catch (Exception ex)
@@ -597,6 +599,7 @@ namespace Journal.ViewModels
             _settingsService.Update(s => s.AgingPaperTexturePath = null);
             UpdateAgingTextureDisplayNames();
             RefreshAgingCacheSize();
+            AgingTextureStorageService.Instance.CleanupOrphanTextures(null, AgingInkTexturePath);
             AgingStatusMessage = "已重置为内置经典纸张纹理";
         }
 
@@ -620,12 +623,14 @@ namespace Journal.ViewModels
                 var file = await picker.PickSingleFileAsync();
                 if (file != null && File.Exists(file.Path))
                 {
-                    await AgingEngineService.Instance.GetInkWeatheringMaskPathAsync(file.Path);
-                    AgingInkTexturePath = file.Path;
-                    _settingsService.Update(s => s.AgingInkTexturePath = file.Path);
+                    string storedPath = await AgingTextureStorageService.Instance.SaveCustomTextureAsync(file.Path, "ink");
+                    await AgingEngineService.Instance.GetInkWeatheringMaskPathAsync(storedPath);
+                    AgingInkTexturePath = storedPath;
+                    _settingsService.Update(s => s.AgingInkTexturePath = storedPath);
                     UpdateAgingTextureDisplayNames();
                     RefreshAgingCacheSize();
-                    AgingStatusMessage = "已成功载入自定义字迹老化纹理！";
+                    AgingTextureStorageService.Instance.CleanupOrphanTextures(AgingPaperTexturePath, storedPath);
+                    AgingStatusMessage = "已成功载入并持久化存储自定义字迹老化纹理！";
                 }
             }
             catch (Exception ex)
@@ -642,6 +647,7 @@ namespace Journal.ViewModels
             _settingsService.Update(s => s.AgingInkTexturePath = null);
             UpdateAgingTextureDisplayNames();
             RefreshAgingCacheSize();
+            AgingTextureStorageService.Instance.CleanupOrphanTextures(AgingPaperTexturePath, null);
             AgingStatusMessage = "已重置为内置经典字迹老化纹理";
         }
 
@@ -689,13 +695,11 @@ namespace Journal.ViewModels
 
         private void UpdateAgingTextureDisplayNames()
         {
-            AgingPaperTextureDisplayName = string.IsNullOrWhiteSpace(AgingPaperTexturePath)
-                ? $"内置经典纸纹 ({AgingConstants.DefaultPaperTextureFileName})"
-                : Path.GetFileName(AgingPaperTexturePath);
+            AgingPaperTextureDisplayName = AgingTextureStorageService.GetDisplayName(
+                AgingPaperTexturePath, $"内置经典纸纹 ({AgingConstants.DefaultPaperTextureFileName})");
 
-            AgingInkTextureDisplayName = string.IsNullOrWhiteSpace(AgingInkTexturePath)
-                ? $"内置经典墨渍 ({AgingConstants.DefaultInkTextureFileName})"
-                : Path.GetFileName(AgingInkTexturePath);
+            AgingInkTextureDisplayName = AgingTextureStorageService.GetDisplayName(
+                AgingInkTexturePath, $"内置经典墨渍 ({AgingConstants.DefaultInkTextureFileName})");
         }
 
         #endregion

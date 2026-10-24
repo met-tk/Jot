@@ -66,9 +66,35 @@ namespace Journal.Services
                     var loaded = JsonSerializer.Deserialize<AppSettings>(json, s_jsonOptions);
                     if (loaded != null)
                     {
+                        // 历史外部贴图路径静默自愈与平滑迁移
+                        bool migrationNeeded = false;
+                        if (!string.IsNullOrWhiteSpace(loaded.AgingPaperTexturePath))
+                        {
+                            string? migrated = await AgingTextureStorageService.Instance.MigrateLegacyTextureIfNeededAsync(loaded.AgingPaperTexturePath, "paper").ConfigureAwait(false);
+                            if (!string.Equals(migrated, loaded.AgingPaperTexturePath, StringComparison.OrdinalIgnoreCase))
+                            {
+                                loaded.AgingPaperTexturePath = migrated;
+                                migrationNeeded = true;
+                            }
+                        }
+                        if (!string.IsNullOrWhiteSpace(loaded.AgingInkTexturePath))
+                        {
+                            string? migrated = await AgingTextureStorageService.Instance.MigrateLegacyTextureIfNeededAsync(loaded.AgingInkTexturePath, "ink").ConfigureAwait(false);
+                            if (!string.Equals(migrated, loaded.AgingInkTexturePath, StringComparison.OrdinalIgnoreCase))
+                            {
+                                loaded.AgingInkTexturePath = migrated;
+                                migrationNeeded = true;
+                            }
+                        }
+
                         lock (_stateLock)
                         {
                             _currentSettings = loaded;
+                        }
+
+                        if (migrationNeeded)
+                        {
+                            await SaveAsync();
                         }
                     }
                 }

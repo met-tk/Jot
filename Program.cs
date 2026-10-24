@@ -58,6 +58,24 @@ namespace Journal
                     Environment.Exit(exitCode);
                     return;
                 }
+
+                if (string.Equals(args[0], "--verify-texture-storage", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(args[0], "--verify-storage", StringComparison.OrdinalIgnoreCase))
+                {
+                    int exitCode = Verification.AgingVerificationRunner.RunTextureStorageTests();
+                    Environment.Exit(exitCode);
+                    return;
+                }
+
+                if (string.Equals(args[0], "--verify-all", StringComparison.OrdinalIgnoreCase))
+                {
+                    int e1 = Verification.AgingVerificationRunner.RunM1Tests();
+                    int e2 = Verification.AgingVerificationRunner.RunM2Tests();
+                    int e3 = Verification.AgingVerificationRunner.RunM3Tests();
+                    int e4 = Verification.AgingVerificationRunner.RunTextureStorageTests();
+                    Environment.Exit((e1 == 0 && e2 == 0 && e3 == 0 && e4 == 0) ? 0 : 1);
+                    return;
+                }
             }
 
             // 具名互斥体单实例保护 (Scoped to Local User Session)，妥善接管上次异常退出遗留的 AbandonedMutex

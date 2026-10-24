@@ -222,47 +222,57 @@
                             CornerRadius="8" Padding="18,16">
                         <StackPanel Spacing="14">
                             <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
                                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                                     <FontIcon Glyph="&#xE9D9;" FontSize="15" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
                                     <TextBlock Text="篇幅字数分布" FontSize="15" FontWeight="SemiBold"/>
                                 </StackPanel>
+                                <TextBlock Grid.Column="1" Text="点击梯队筛选日记" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
                             </Grid>
 
                             <TextBlock Text="{x:Bind ViewModel.DominantTierDescription, Mode=OneWay}"
                                        FontSize="12" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" FontWeight="SemiBold"/>
 
-                            <!-- 5 级梯队列表 -->
+                            <!-- 5 级梯队列表 (点击任意梯队穿透查看该篇幅的全部日记) -->
                             <ItemsControl ItemsSource="{x:Bind ViewModel.LengthTiers, Mode=OneWay}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="viewmodels:LengthTierItem">
-                                        <Grid Margin="0,0,0,10" ColumnSpacing="10">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="65"/>
-                                                <ColumnDefinition Width="80"/>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="40"/>
-                                            </Grid.ColumnDefinitions>
+                                        <Button Style="{ThemeResource SubtleButtonStyle}"
+                                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                                Padding="4,2" Margin="0,0,0,6" CornerRadius="6"
+                                                Tag="{x:Bind}" Click="LengthTierItem_Click">
                                             <ToolTipService.ToolTip>
-                                                <ToolTip Content="{x:Bind ToolTipText}"/>
+                                                <ToolTip Content="点击查看该篇幅的日记列表"/>
                                             </ToolTipService.ToolTip>
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="65"/>
+                                                    <ColumnDefinition Width="80"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="40"/>
+                                                </Grid.ColumnDefinitions>
 
-                                            <!-- 梯队名称 -->
-                                            <TextBlock Text="{x:Bind TierName}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                <!-- 梯队名称 -->
+                                                <TextBlock Text="{x:Bind TierName}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
 
-                                            <!-- 字数区间 -->
-                                            <TextBlock Grid.Column="1" Text="{x:Bind RangeLabel}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                                                <!-- 字数区间 -->
+                                                <TextBlock Grid.Column="1" Text="{x:Bind RangeLabel}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
 
-                                            <!-- 进度占比条 -->
-                                            <ProgressBar Grid.Column="2" Value="{x:Bind Percentage}" Maximum="100"
-                                                         Height="5" CornerRadius="2.5" VerticalAlignment="Center"
-                                                         Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                                <!-- 进度占比条 -->
+                                                <ProgressBar Grid.Column="2" Value="{x:Bind Percentage}" Maximum="100"
+                                                             Height="5" CornerRadius="2.5" VerticalAlignment="Center"
+                                                             Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
 
-                                            <!-- 篇数 -->
-                                            <StackPanel Grid.Column="3" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                                <TextBlock Text="{x:Bind Count}" FontSize="12" FontWeight="SemiBold"/>
-                                                <TextBlock Text="篇" FontSize="10" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="2,1,0,0"/>
-                                            </StackPanel>
-                                        </Grid>
+                                                <!-- 篇数 -->
+                                                <StackPanel Grid.Column="3" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                    <TextBlock Text="{x:Bind Count}" FontSize="12" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="篇" FontSize="10" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="2,1,0,0"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Button>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
@@ -285,6 +295,7 @@
                                 <FontIcon Glyph="&#xEC92;" FontSize="15" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
                                 <TextBlock Text="24小时记录时段分布" FontSize="15" FontWeight="SemiBold"/>
                             </StackPanel>
+                            <TextBlock Grid.Column="1" Text="点击柱条查看命中记录" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
                         </Grid>
 
                         <TextBlock Text="{x:Bind ViewModel.PeakHourDescription, Mode=OneWay}"
@@ -307,15 +318,17 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="viewmodels:HourlyHeatItem">
-                                        <Border VerticalAlignment="Bottom" HorizontalAlignment="Stretch" Margin="2,0"
-                                                Height="{x:Bind BarHeight}"
-                                                CornerRadius="3"
-                                                Background="{ThemeResource AccentFillColorDefaultBrush}"
-                                                Opacity="0.85">
-                                            <ToolTipService.ToolTip>
-                                                <ToolTip Content="{x:Bind ToolTipText}"/>
-                                            </ToolTipService.ToolTip>
-                                        </Border>
+                                        <Button Style="{ThemeResource SubtleButtonStyle}"
+                                                VerticalAlignment="Stretch" HorizontalAlignment="Stretch"
+                                                VerticalContentAlignment="Bottom"
+                                                Padding="0" Margin="2,0" CornerRadius="3"
+                                                Tag="{x:Bind}" Click="HourBar_Click"
+                                                ToolTipService.ToolTip="{x:Bind ToolTipText}">
+                                            <Border Height="{x:Bind BarHeight}"
+                                                    CornerRadius="3"
+                                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                                    Opacity="0.85"/>
+                                        </Button>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
@@ -391,11 +404,11 @@
                 </Grid.ColumnDefinitions>
 
                 <Button Grid.Column="0" Style="{ThemeResource SubtleButtonStyle}" Padding="10,6"
-                        Command="{x:Bind ViewModel.CloseWordListCommand}" ToolTipService.ToolTip="返回词云与大盘"
+                        Command="{x:Bind ViewModel.CloseWordListCommand}" ToolTipService.ToolTip="返回统计概览"
                         VerticalAlignment="Center">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon Glyph="&#xE72B;" FontSize="12"/>
-                        <TextBlock Text="返回词云" FontSize="12"/>
+                        <TextBlock Text="返回统计" FontSize="12"/>
                     </StackPanel>
                 </Button>
 
@@ -406,9 +419,9 @@
                     </Grid.ColumnDefinitions>
                     <FontIcon Glyph="&#xE8B9;" FontSize="16" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
                     <TextBlock Grid.Column="1" FontSize="18" FontWeight="Bold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center">
-                        <Run Text="关键词「"/>
-                        <Run Text="{x:Bind ViewModel.SelectedWord, Mode=OneWay}" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
-                        <Run Text="」相关日记"/>
+                        <Run Text="{x:Bind ViewModel.MatchedTitlePrefix, Mode=OneWay}"/>
+                        <Run Text="{x:Bind ViewModel.MatchedTitleHighlight, Mode=OneWay}" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                        <Run Text="{x:Bind ViewModel.MatchedTitleSuffix, Mode=OneWay}"/>
                     </TextBlock>
                 </Grid>
 
@@ -427,7 +440,7 @@
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,80,0,0" Spacing="10"
                                 Visibility="{x:Bind local:AnalyticsPage.GetEmptyVisibility(ViewModel.MatchedCount), Mode=OneWay}">
                         <FontIcon Glyph="&#xE8F1;" FontSize="36" Opacity="0.3" HorizontalAlignment="Center"/>
-                        <TextBlock Text="未找到包含该词汇的日记" FontSize="14" Opacity="0.6" HorizontalAlignment="Center"/>
+                        <TextBlock Text="未找到匹配的日记" FontSize="14" Opacity="0.6" HorizontalAlignment="Center"/>
                     </StackPanel>
 
                     <ItemsControl ItemsSource="{x:Bind ViewModel.MatchedDiaries, Mode=OneWay}">
@@ -514,7 +527,110 @@
             </ScrollViewer>
         </Grid>
 
-        <!-- 3. 视图层级 3：单日只读阅读预览窗口 (双栏带右侧当月辅助日历，完全沿用目录模块) -->
+        <!-- 3. 视图层级 4：时段命中记录时间线 (仅显示命中记录片段与所属日期，非整篇日记) -->
+        <Grid Visibility="{x:Bind local:AnalyticsPage.GetVisibility(ViewModel.IsHourRecordsMode), Mode=OneWay}"
+              Padding="24,18,24,20" RowSpacing="16" Background="Transparent">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- 顶部操作条：返回概览按钮 + 标头 + 命中条数胶囊 -->
+            <Grid Grid.Row="0" ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Button Grid.Column="0" Style="{ThemeResource SubtleButtonStyle}" Padding="10,6"
+                        Command="{x:Bind ViewModel.CloseHourRecordsCommand}" ToolTipService.ToolTip="返回统计概览"
+                        VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE72B;" FontSize="12"/>
+                        <TextBlock Text="返回统计" FontSize="12"/>
+                    </StackPanel>
+                </Button>
+
+                <Grid Grid.Column="1" ColumnSpacing="6" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE916;" FontSize="16" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="1" FontSize="18" FontWeight="Bold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center">
+                        <Run Text="时段「"/>
+                        <Run Text="{x:Bind ViewModel.SelectedHourTitle, Mode=OneWay}" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                        <Run Text="」命中记录"/>
+                    </TextBlock>
+                </Grid>
+
+                <Border Grid.Column="2" Background="{ThemeResource AppBadgeBackgroundBrush}" BorderBrush="{ThemeResource AppBadgeBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="10,4" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <TextBlock Text="{x:Bind ViewModel.HourRecordCount, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                        <TextBlock Text="条记录" FontSize="11" Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- 主体：命中记录时间线 (左时刻胶囊 + 右记录片段) -->
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <Grid HorizontalAlignment="Stretch" Margin="0,4,0,24">
+                    <!-- 空状态 -->
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,80,0,0" Spacing="10"
+                                Visibility="{x:Bind local:AnalyticsPage.GetEmptyVisibility(ViewModel.HourRecordCount), Mode=OneWay}">
+                        <FontIcon Glyph="&#xE823;" FontSize="36" Opacity="0.3" HorizontalAlignment="Center"/>
+                        <TextBlock Text="该时段暂无命中记录" FontSize="14" Opacity="0.6" HorizontalAlignment="Center"/>
+                    </StackPanel>
+
+                    <ItemsControl ItemsSource="{x:Bind ViewModel.HourRecords, Mode=OneWay}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="viewmodels:HourRecordItem">
+                                <Border Margin="0,0,0,8" Padding="14,10" CornerRadius="8"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                                        Tag="{x:Bind}"
+                                        PointerPressed="HourRecordItem_PointerPressed"
+                                        ToolTipService.ToolTip="点击查看当天完整日记">
+                                    <Grid ColumnSpacing="14">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- 左：命中时刻与所属日期胶囊 -->
+                                        <Border Grid.Column="0"
+                                                Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                CornerRadius="6" Padding="10,6" MinWidth="80" VerticalAlignment="Center">
+                                            <StackPanel HorizontalAlignment="Center" Spacing="2">
+                                                <TextBlock Text="{x:Bind TimeText}" FontSize="15" FontWeight="Bold"
+                                                           HorizontalAlignment="Center"
+                                                           Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                                <TextBlock FontSize="10" HorizontalAlignment="Center"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}">
+                                                    <Run Text="{x:Bind DateLabel}"/>
+                                                    <Run Text="{x:Bind WeekLabel}"/>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <!-- 右：该条记录的文字片段 (最多 4 行截断) -->
+                                        <TextBlock Grid.Column="1" Text="{x:Bind Snippet}"
+                                                   FontSize="12.5" LineHeight="19" Opacity="0.88"
+                                                   Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                                   TextWrapping="Wrap" MaxLines="4"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- 4. 视图层级 3：单日只读阅读预览窗口 (双栏带右侧当月辅助日历，完全沿用目录模块) -->
         <Grid Visibility="{x:Bind local:AnalyticsPage.GetVisibility(ViewModel.IsReadingMode), Mode=OneWay}"
               Padding="24,18,24,20" ColumnSpacing="20" Background="Transparent">
             <Grid.ColumnDefinitions>
