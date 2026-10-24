@@ -113,8 +113,10 @@ namespace Journal.ViewModels
         [ObservableProperty]
         private string _storageDirectoryPath = string.Empty;
 
+        // 版本号取自 csproj 的 <Version>（随构建自动同步），避免硬编码后各版本间漂移
         [ObservableProperty]
-        private string _appVersionText = "Jot v1.3.1";
+        private string _appVersionText =
+            $"Jot v{System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0"}";
 
         // 岁月沉淀拟物渲染系统配置项
         [ObservableProperty]
