@@ -40,3 +40,6 @@ Thumbs.db
 # Raw audio materials
 [Ss]ucai/
 素材/
+
+# Installer toolchain (local-only, matches original repo convention)
+/Installer/
