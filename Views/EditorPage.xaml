@@ -5,14 +5,10 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:viewmodels="using:Journal.ViewModels"
-    KeyboardAcceleratorPlacementMode="Hidden"
     mc:Ignorable="d">
 
-    <!-- 快捷键仅作键序绑定：Ctrl+T 插入时间戳、Ctrl+S 保存；悬浮提示由 PlacementMode=Hidden 抑制 -->
-    <Page.KeyboardAccelerators>
-        <KeyboardAccelerator Key="T" Modifiers="Control" Invoked="InsertTimestampAccelerator_Invoked"/>
-        <KeyboardAccelerator Key="S" Modifiers="Control" Invoked="SaveAccelerator_Invoked"/>
-    </Page.KeyboardAccelerators>
+    <!-- Ctrl+T / Ctrl+S 由 OnPagePreviewKeyDown 统一处理；不再声明 KeyboardAccelerator，
+         避免其按键提示引擎在编辑区反复激活导致光标样式闪烁 -->
 
     <Grid Background="Transparent">
         <!-- 响应式状态流：850px 断点平滑处理 750px 紧凑分屏与 4K 超宽屏视口 -->
