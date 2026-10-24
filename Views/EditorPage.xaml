@@ -5,12 +5,11 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:viewmodels="using:Journal.ViewModels"
+    xmlns:controls="using:Journal.Controls"
     mc:Ignorable="d">
 
-    <Page.KeyboardAccelerators>
-        <KeyboardAccelerator Key="T" Modifiers="Control" Invoked="InsertTimestampAccelerator_Invoked"/>
-        <KeyboardAccelerator Key="S" Modifiers="Control" Invoked="SaveAccelerator_Invoked"/>
-    </Page.KeyboardAccelerators>
+    <!-- Ctrl+T / Ctrl+S 由 OnPagePreviewKeyDown 统一处理；不再声明 KeyboardAccelerator，
+         避免其按键提示引擎在编辑区反复激活导致光标样式闪烁 -->
 
     <Grid Background="Transparent">
         <!-- 响应式状态流：850px 断点平滑处理 750px 紧凑分屏与 4K 超宽屏视口 -->
@@ -134,7 +133,7 @@
               SizeChanged="EditorViewport_SizeChanged">
                 <Grid x:Name="EditorPaperContainer" MaxWidth="860" HorizontalAlignment="Center">
                     <!-- 字形与风化遮罩始终来自同一个原生排版视口。 -->
-                    <RichEditBox x:Name="ContentEditorBox"
+                    <controls:JotRichEditBox x:Name="ContentEditorBox"
                                  HorizontalAlignment="Stretch"
                                  AcceptsReturn="True"
                                  TextWrapping="Wrap"
@@ -163,7 +162,7 @@
                             <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="#FF1A1A1A"/>
                             <SolidColorBrush x:Key="TextControlForegroundFocused" Color="#FF1A1A1A"/>
                         </RichEditBox.Resources>
-                    </RichEditBox>
+                    </controls:JotRichEditBox>
 
                     <!-- 字迹纹理只在编辑器实际绘出的笔画内显示，交互始终交给原生编辑器。 -->
                     <Border x:Name="InkWeatheringHost"
