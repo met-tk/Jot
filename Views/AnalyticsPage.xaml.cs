@@ -124,10 +124,14 @@ namespace Journal.Views
             }
         }
 
-        private async void HourBar_Click(object sender, RoutedEventArgs e)
+        private async void HourBar_PointerPressed(object sender, PointerRoutedEventArgs e)
         {
+            var point = e.GetCurrentPoint(sender as UIElement);
+            if (!point.Properties.IsLeftButtonPressed) return;
+
             if (sender is FrameworkElement { Tag: HourlyHeatItem hourItem })
             {
+                e.Handled = true;
                 await ViewModel.SearchByHourAsync(hourItem.Hour);
             }
         }

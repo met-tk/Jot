@@ -318,17 +318,17 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="viewmodels:HourlyHeatItem">
-                                        <Button Style="{ThemeResource SubtleButtonStyle}"
-                                                VerticalAlignment="Stretch" HorizontalAlignment="Stretch"
-                                                VerticalContentAlignment="Bottom"
-                                                Padding="0" Margin="2,0" CornerRadius="3"
-                                                Tag="{x:Bind}" Click="HourBar_Click"
-                                                ToolTipService.ToolTip="{x:Bind ToolTipText}">
-                                            <Border Height="{x:Bind BarHeight}"
+                                        <!-- 透明全格命中层：整列高度可点击；柱条渲染与裸 Border 时代完全一致 -->
+                                        <Grid Background="Transparent" Margin="2,0"
+                                              VerticalAlignment="Stretch" HorizontalAlignment="Stretch"
+                                              Tag="{x:Bind}" PointerPressed="HourBar_PointerPressed"
+                                              ToolTipService.ToolTip="{x:Bind ToolTipText}">
+                                            <Border VerticalAlignment="Bottom"
+                                                    Height="{x:Bind BarHeight}"
                                                     CornerRadius="3"
                                                     Background="{ThemeResource AccentFillColorDefaultBrush}"
                                                     Opacity="0.85"/>
-                                        </Button>
+                                        </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>

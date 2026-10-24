@@ -19,7 +19,7 @@
     <Version>1.4.0</Version>
     <ApplicationIcon>Assets\jot.ico</ApplicationIcon>
     <SatelliteResourceLanguages>zh-CN;zh-Hans;en-US</SatelliteResourceLanguages>
-    <DefaultItemExcludes>$(DefaultItemExcludes);Release\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);Release\**;Installer\**</DefaultItemExcludes>
     <NoWarn>$(NoWarn);MVVMTK0045</NoWarn>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>

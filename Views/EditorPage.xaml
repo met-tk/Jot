@@ -5,8 +5,10 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:viewmodels="using:Journal.ViewModels"
+    KeyboardAcceleratorPlacementMode="Hidden"
     mc:Ignorable="d">
 
+    <!-- 快捷键仅作键序绑定：Ctrl+T 插入时间戳、Ctrl+S 保存；悬浮提示由 PlacementMode=Hidden 抑制 -->
     <Page.KeyboardAccelerators>
         <KeyboardAccelerator Key="T" Modifiers="Control" Invoked="InsertTimestampAccelerator_Invoked"/>
         <KeyboardAccelerator Key="S" Modifiers="Control" Invoked="SaveAccelerator_Invoked"/>
