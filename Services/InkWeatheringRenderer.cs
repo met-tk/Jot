@@ -61,10 +61,7 @@ internal sealed class InkWeatheringRenderer
         ElementCompositionPreview.SetElementChildVisual(host, _output);
         // CompositionVisualSurface ignores the source root's opacity. This is
         // the same redirection pattern used by WinUI Gallery's OpacityMaskView.
-        // Opacity must stay > 0: a fully transparent element drops out of the
-        // system cursor hit-test path and the pointer alternates between the
-        // text I-beam and the arrow while hovering the editor. 0.01 is invisible.
-        nativeVisual.Opacity = 0.01f;
+        nativeVisual.Opacity = 0;
 
         editor.SizeChanged += (_, _) => DrawTexture();
         editor.Loaded += (_, _) =>
