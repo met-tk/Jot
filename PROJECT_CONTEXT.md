@@ -9,7 +9,7 @@
 - `MainWindow.xaml(.cs)`：`GlobalPaperAgingHost` 覆盖全软件窗口底色层，通过 `CompositionBackdropBrush` 实施真·正片叠底 (Multiply) 与反向滤色 (Screen)，实时融入底色与 Mica。
 - `Views/EditorPage.xaml(.cs)`：通过 `CompositionVisualSurface` 采样实际 `RichEditBox` 视口，并从其原生字形覆盖区域提取遮罩。灰度贴图转换为磨损 Alpha，合成时仅在磨损笔画处还原同一位置的干净纸面，形成实际墨迹脱落。亮暗模式分别过滤编辑器底色和蓝色选区；留白保留透明。纹理镜像重复，偏移随正文滚动。原生编辑器始终显示，聚焦与失焦不切换排版层。旧日记内容切换前预加载贴图，输入时仅更新原生控件与 GPU 合成，不重算整篇文字样式。
 - `Services/AgingEngineService.cs`：一级时间衰减模型（当日及未来日记强度为零），纸纹灰度预处理与字迹灰度、透明磨损遮罩两级磁盘缓存。字迹遮罩 `wearmask-v4` 按贴图自身的对比度范围归一化；用户提供的低对比度贴图在 100% 强度下也能形成可见磨损。默认纹理在 `Assets/Textures`。
-- `Views/SettingsPage.xaml` & `ViewModels/SettingsViewModel.cs`：提供独立双滑块（纸张底色强度 `AgingPaperIntensity` / 字迹风化强度 `AgingInkIntensity`），双贴图选择与缓存清理。
+- `Views/SettingsPage.xaml` & `ViewModels/SettingsViewModel.cs`：提供独立双滑块（纸张底色强度 `AgingPaperIntensity` / 字迹风化强度 `AgingInkIntensity`），双贴图选择与缓存清理；v1.5.0 新增纸张贴图叠加方式下拉（`AgingPaperBlendMode`：跟随主题/正片叠底/反相滤色/叠加/柔光），由 `AgingEngineService.ResolvePaperBlendPipeline` 解析为 Win2D 混合模式与贴图反相标志。
 - `Services/AgingTextureStorageService.cs`：用户自定义贴图自主持久化托管（`Documents/JournalData/Textures/`），SHA-256 CAS 去重、格式魔数探针、历史外部路径静默自愈迁移与双槽位引用保护孤儿垃圾回收。
 - `Models/AppSettings.cs`：支持独立纸墨强度配置与 300ms 磁盘防抖原子落盘。
 
@@ -23,4 +23,4 @@
 - **日历视图**：当日标识由纯色背景改为 1.5px 主题色内嵌边框 + 主题色数字，与记录日热力色明确区分；日视图回退按进入来源原路返回（年视图进入则退回年视图），顶部"返回上级"按钮文案联动；移除日视图右侧辅助日历下冗余的日期状态卡片。
 - **目录视图**：多选工具栏按钮组从右侧移至左侧；修复多选卡片中复选框默认 `MinWidth=120` 撑出的空白竖列。
 - **统计视图**：篇幅梯队与 24 小时时段柱均可点击穿透——篇幅命中复用匹配日记列表；时段命中进入全新"时段记录时间线"，仅列出命中的时间戳记录片段（精确到秒、标注所属日期），点击可跳转当天完整日记；阅读层返回时记忆来路。
-- **安装包**：`Release\Jot_Setup_v1.4.4.exe`（97.5 MB，payload 压缩 92.7 MB / 解压约 236 MB），由本地 `Installer\JotSetup`（net48 WinForms 向导，从原版仓库复制，gitignore 不入库）打包 `Release\Publish` 自包含产物；`Uninstall.exe` 沿用旧 payload 中既有二进制。
+- **安装包**：`Release\Jot_Setup_v1.5.0.exe`（97.5 MB，payload 压缩 92.7 MB / 解压约 236 MB），由本地 `Installer\JotSetup`（net48 WinForms 向导，从原版仓库复制，gitignore 不入库）打包 `Release\Publish` 自包含产物；`Uninstall.exe` 沿用旧 payload 中既有二进制。

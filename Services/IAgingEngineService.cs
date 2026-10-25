@@ -32,9 +32,9 @@ namespace Journal.Services
         /// 异步获取/预处理纸张底色纹理磁盘缓存路径
         /// </summary>
         /// <param name="sourcePath">自定义或默认纹理文件物理路径</param>
-        /// <param name="isDarkMode">当前是否处于暗黑主题</param>
+        /// <param name="invertTexture">是否反相贴图灰度（反相滤色管线需要）</param>
         /// <returns>处理后用于 XAML / Direct2D 绑定的本地缓存文件绝对路径</returns>
-        Task<string> GetPreprocessedPaperTexturePathAsync(string? sourcePath, bool isDarkMode);
+        Task<string> GetPreprocessedPaperTexturePathAsync(string? sourcePath, bool invertTexture);
 
         /// <summary>
         /// 异步获取/预处理字迹风化纹理磁盘缓存路径

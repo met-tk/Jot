@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
+using Microsoft.Graphics.Canvas.Effects;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 using Journal.Models;
@@ -47,7 +48,7 @@ namespace Journal.Services
             return AgingModel.Calculate(entryDate, userStrengthSetting, isAgingEnabled);
         }
 
-        public async Task<string> GetPreprocessedPaperTexturePathAsync(string? sourcePath, bool isDarkMode)
+        public async Task<string> GetPreprocessedPaperTexturePathAsync(string? sourcePath, bool invertTexture)
         {
             string resolvedPath = ResolveTexturePath(sourcePath, isPaper: true);
             if (!File.Exists(resolvedPath))
@@ -55,9 +56,26 @@ namespace Journal.Services
                 throw new FileNotFoundException($"Paper texture file not found: {sourcePath}", sourcePath ?? string.Empty);
             }
 
-            string mode = isDarkMode ? "inv" : "gray";
+            string mode = invertTexture ? "inv" : "gray";
             return await _cacheService.GetOrCreateCachedFileAsync(resolvedPath, mode,
-                (src, dst) => Task.Run(() => ProcessTextureAsync(src, dst, invert: isDarkMode, autoLevels: true)));
+                (src, dst) => Task.Run(() => ProcessTextureAsync(src, dst, invert: invertTexture, autoLevels: true)));
+        }
+
+        /// <summary>
+        /// 解析纸张贴图叠加方式设置为实际渲染管线参数。
+        /// "Auto" 跟随主题：浅色 Multiply 正片叠底（不反相），深色 Screen 反相滤色（反相）；
+        /// 其余自定义值固定混合模式，不再随主题切换。
+        /// </summary>
+        public static (BlendEffectMode Mode, bool InvertTexture) ResolvePaperBlendPipeline(string? blendSetting, bool isDark)
+        {
+            return (blendSetting ?? "Auto") switch
+            {
+                "Multiply" => (BlendEffectMode.Multiply, false),
+                "Screen" => (BlendEffectMode.Screen, true),
+                "Overlay" => (BlendEffectMode.Overlay, false),
+                "SoftLight" => (BlendEffectMode.SoftLight, false),
+                _ => isDark ? (BlendEffectMode.Screen, true) : (BlendEffectMode.Multiply, false)
+            };
         }
 
         public async Task<string> GetPreprocessedInkTexturePathAsync(string? sourcePath)

@@ -39,6 +39,7 @@ namespace Journal.Models
         public double AgingIntensity { get; set; } = 0.85; // 0.0 ~ 1.0 (保留向后兼容)
         public double AgingPaperIntensity { get; set; } = 0.85; // 0.0 ~ 1.0 (纸张底色老化强度)
         public double AgingInkIntensity { get; set; } = 0.85; // 0.0 ~ 1.0 (字迹风化褪色强度)
+        public string AgingPaperBlendMode { get; set; } = "Auto"; // "Auto"=跟随主题, "Multiply"=正片叠底, "Screen"=反相滤色, "Overlay"=叠加, "SoftLight"=柔光
 
         // 5. 窗口位置、尺寸与视图缩放记忆
         public int WindowX { get; set; } = -1;
@@ -109,6 +110,7 @@ namespace Journal.Models
                 AgingIntensity = this.AgingIntensity,
                 AgingPaperIntensity = this.AgingPaperIntensity,
                 AgingInkIntensity = this.AgingInkIntensity,
+                AgingPaperBlendMode = this.AgingPaperBlendMode,
                 WindowX = this.WindowX,
                 WindowY = this.WindowY,
                 WindowWidth = this.WindowWidth,

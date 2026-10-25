@@ -287,7 +287,7 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Spacing="2" VerticalAlignment="Center">
                                     <TextBlock Text="纸张底色纹理贴图" FontSize="13" FontWeight="Medium"/>
-                                     <TextBlock Text="自动去色转为灰度；浅色主题正片叠底，深色主题反相滤色"
+                                     <TextBlock Text="自动去色转为灰度；叠加方式可在下方自定义"
                                                FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
                                     <TextBlock Text="{x:Bind ViewModel.AgingPaperTextureDisplayName, Mode=OneWay}"
                                                FontSize="11" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" Margin="0,2,0,0"/>
@@ -298,6 +298,24 @@
                                     <Button Content="重置默认" Style="{ThemeResource SubtleButtonStyle}" Padding="10,6"
                                             Command="{x:Bind ViewModel.ResetPaperTextureCommand}"/>
                                 </StackPanel>
+                            </Grid>
+
+                            <!-- 纸张贴图叠加方式 -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock Text="贴图叠加方式" FontSize="13" FontWeight="Medium"/>
+                                    <TextBlock Text="自定义纸张纹理与底色的混合算法，默认跟随主题自动切换"
+                                               FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                                </StackPanel>
+                                <ComboBox Grid.Column="1" MinWidth="220" VerticalAlignment="Center"
+                                          ItemsSource="{x:Bind ViewModel.AvailableAgingPaperBlendOptions, Mode=OneWay}"
+                                          DisplayMemberPath="Title"
+                                          SelectedValuePath="Id"
+                                          SelectedValue="{x:Bind ViewModel.SelectedAgingPaperBlendMode, Mode=TwoWay}"/>
                             </Grid>
 
                             <!-- 字迹老化风化贴图选择 -->
@@ -329,7 +347,7 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Spacing="2" VerticalAlignment="Center">
                                     <TextBlock Text="纸张底色老化强度" FontSize="13" FontWeight="Medium"/>
-                                    <TextBlock Text="调节全软件底色层正片叠底/滤色的纹理浓淡，当日日记严格豁免"
+                                    <TextBlock Text="调节全软件底色层贴图叠加的纹理浓淡，当日日记严格豁免"
                                                FontSize="11" Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">

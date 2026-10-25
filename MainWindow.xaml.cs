@@ -988,8 +988,8 @@ namespace Journal
         private CompositionSurfaceBrush? _globalPaperAgingSurfaceBrush;
         private CompositionBackdropBrush? _globalPaperAgingBackdropBrush;
         private LoadedImageSurface? _globalPaperAgingLoadedSurface;
-        private bool? _currentGlobalAgingIsDark;
         private string? _currentGlobalAgingTexturePath;
+        private string? _currentGlobalAgingBlendKey;
         private int _paperUpdateVersion;
 
         private void InitializeGlobalPaperAgingVisual()
@@ -1090,15 +1090,18 @@ namespace Journal
                 }
 
                 bool isDark = IsGlobalAgingDarkEffective();
-                bool themeChanged = (_currentGlobalAgingIsDark != isDark);
+                // 贴图叠加方式：默认跟随主题（浅色正片叠底/深色反相滤色），可由设置自定义固定混合模式
+                var (blendMode, invertTexture) = AgingEngineService.ResolvePaperBlendPipeline(settings.AgingPaperBlendMode, isDark);
+                string blendKey = $"{blendMode}:{invertTexture}";
+                bool pipelineChanged = (_currentGlobalAgingBlendKey != blendKey);
                 bool textureChanged = (_currentGlobalAgingTexturePath != customPath);
 
                 _globalPaperAgingSpriteVisual.Opacity = (float)intensity;
                 _globalPaperAgingSpriteVisual.IsVisible = _globalPaperAgingEffectBrush != null;
 
-                if (forceTextureReload || themeChanged || textureChanged || _globalPaperAgingEffectBrush == null)
+                if (forceTextureReload || pipelineChanged || textureChanged || _globalPaperAgingEffectBrush == null)
                 {
-                    string texturePath = await AgingEngineService.Instance.GetPreprocessedPaperTexturePathAsync(customPath, isDark);
+                    string texturePath = await AgingEngineService.Instance.GetPreprocessedPaperTexturePathAsync(customPath, invertTexture);
                     if (version != _paperUpdateVersion) return;
                     newSurface = await AgingImageSurfaceLoader.LoadAsync(texturePath);
                     if (version != _paperUpdateVersion) return;
@@ -1106,10 +1109,11 @@ namespace Journal
                     // 真·正片叠底与反向滤色混合管道：
                     // 使用 CompositionBackdropBrush 实时捕获窗口底色（Mica/Acrylic 与 BackdropTintOverlay 真实像素）
                     // 浅色模式下 BlendEffectMode.Multiply 正片叠底将纸纹纤维真实渗透压暗底色；
-                    // 深色模式下 BlendEffectMode.Screen 反向滤色将亮场纸纹纤维柔和漫射提亮。
+                    // 深色模式下 BlendEffectMode.Screen 反向滤色将亮场纸纹纤维柔和漫射提亮；
+                    // 自定义叠加方式时按设置固定混合模式（正片叠底/反相滤色/叠加/柔光）。
                     var blendEffect = new BlendEffect
                     {
-                        Mode = isDark ? BlendEffectMode.Screen : BlendEffectMode.Multiply,
+                        Mode = blendMode,
                         Background = new CompositionEffectSourceParameter("Background"),
                         Foreground = new CompositionEffectSourceParameter("Foreground")
                     };
@@ -1135,7 +1139,7 @@ namespace Journal
                     _globalPaperAgingBackdropBrush = newBackdropBrush;
                     _globalPaperAgingSurfaceBrush = newTextureBrush;
                     _globalPaperAgingLoadedSurface = newSurface;
-                    _currentGlobalAgingIsDark = isDark;
+                    _currentGlobalAgingBlendKey = blendKey;
                     _currentGlobalAgingTexturePath = customPath;
                     oldTextureBrush?.Dispose();
                     oldEffectBrush?.Dispose();

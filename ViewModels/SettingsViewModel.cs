@@ -74,6 +74,15 @@ namespace Journal.ViewModels
             new() { Id = "ClassicSepia", Title = "复古暖褐 (古籍焦糖)", Subtitle = "复古羊皮卷与古卷沉香" }
         };
 
+        public List<SelectionOptionItem> AvailableAgingPaperBlendOptions { get; } = new()
+        {
+            new() { Id = "Auto", Title = "跟随主题 (默认)", Subtitle = "浅色正片叠底 · 深色反相滤色" },
+            new() { Id = "Multiply", Title = "正片叠底", Subtitle = "纸纹纤维渗透压暗底色" },
+            new() { Id = "Screen", Title = "反相滤色", Subtitle = "反相纸纹柔和漫射提亮底色" },
+            new() { Id = "Overlay", Title = "叠加", Subtitle = "强化纸纹明暗对比层次" },
+            new() { Id = "SoftLight", Title = "柔光", Subtitle = "轻柔纸纹光泽过渡" }
+        };
+
         [ObservableProperty]
         private bool _isSoundEnabled;
 
@@ -136,6 +145,9 @@ namespace Journal.ViewModels
 
         [ObservableProperty]
         private double _agingInkIntensityPercent = 85.0;
+
+        [ObservableProperty]
+        private string _selectedAgingPaperBlendMode = "Auto";
 
         [ObservableProperty]
         private string _agingPaperTextureDisplayName = "内置经典纸纹";
@@ -228,6 +240,7 @@ namespace Journal.ViewModels
                 AgingIntensityPercent = Math.Round(s.AgingIntensity * 100.0, 0);
                 AgingPaperIntensityPercent = Math.Round(s.AgingPaperIntensity * 100.0, 0);
                 AgingInkIntensityPercent = Math.Round(s.AgingInkIntensity * 100.0, 0);
+                SelectedAgingPaperBlendMode = string.IsNullOrWhiteSpace(s.AgingPaperBlendMode) ? "Auto" : s.AgingPaperBlendMode;
                 UpdateAgingTextureDisplayNames();
                 RefreshAgingCacheSize();
 
@@ -527,6 +540,20 @@ namespace Journal.ViewModels
             }
         }
 
+        partial void OnSelectedAgingPaperBlendModeChanged(string value)
+        {
+            if (_isUpdatingFromModel || _isSavingLocally) return;
+            _isSavingLocally = true;
+            try
+            {
+                _settingsService.Update(s => s.AgingPaperBlendMode = value);
+            }
+            finally
+            {
+                _isSavingLocally = false;
+            }
+        }
+
         partial void OnAgingPaperIntensityPercentChanged(double value)
         {
             if (_isUpdatingFromModel || _isSavingLocally) return;
@@ -578,7 +605,7 @@ namespace Journal.ViewModels
                 if (file != null && File.Exists(file.Path))
                 {
                     string storedPath = await AgingTextureStorageService.Instance.SaveCustomTextureAsync(file.Path, "paper");
-                    await AgingEngineService.Instance.GetPreprocessedPaperTexturePathAsync(storedPath, isDarkMode: false);
+                    await AgingEngineService.Instance.GetPreprocessedPaperTexturePathAsync(storedPath, invertTexture: false);
                     AgingPaperTexturePath = storedPath;
                     _settingsService.Update(s => s.AgingPaperTexturePath = storedPath);
                     UpdateAgingTextureDisplayNames();

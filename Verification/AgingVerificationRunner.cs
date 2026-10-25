@@ -758,7 +758,7 @@ namespace Journal.Verification
             RunTest("M2_3: Light Mode Texture Resolution & Multiply Blend", () =>
             {
                 var engine = AgingEngineService.Instance;
-                string lightTexturePath = engine.GetPreprocessedPaperTexturePathAsync(null, isDarkMode: false).GetAwaiter().GetResult();
+                string lightTexturePath = engine.GetPreprocessedPaperTexturePathAsync(null, invertTexture: false).GetAwaiter().GetResult();
 
                 if (string.IsNullOrWhiteSpace(lightTexturePath))
                     throw new Exception("Light mode paper texture path was null or empty");
@@ -811,7 +811,7 @@ namespace Journal.Verification
             RunTest("M2_4: Dark Mode Texture Resolution & Screen Blend", () =>
             {
                 var engine = AgingEngineService.Instance;
-                string darkTexturePath = engine.GetPreprocessedPaperTexturePathAsync(null, isDarkMode: true).GetAwaiter().GetResult();
+                string darkTexturePath = engine.GetPreprocessedPaperTexturePathAsync(null, invertTexture: true).GetAwaiter().GetResult();
 
                 if (string.IsNullOrWhiteSpace(darkTexturePath))
                     throw new Exception("Dark mode paper texture path was null or empty");
@@ -893,8 +893,8 @@ namespace Journal.Verification
                     var details = engine.GetAgingDetails(d, 1.0, true);
 
                     // 验证无论切至哪个日期，路径均秒级从缓存复用返回
-                    string lightPath = engine.GetPreprocessedPaperTexturePathAsync(null, isDarkMode: false).GetAwaiter().GetResult();
-                    string darkPath = engine.GetPreprocessedPaperTexturePathAsync(null, isDarkMode: true).GetAwaiter().GetResult();
+                    string lightPath = engine.GetPreprocessedPaperTexturePathAsync(null, invertTexture: false).GetAwaiter().GetResult();
+                    string darkPath = engine.GetPreprocessedPaperTexturePathAsync(null, invertTexture: true).GetAwaiter().GetResult();
 
                     if (!File.Exists(lightPath) || !File.Exists(darkPath))
                         throw new Exception($"Texture path missing during jump {i} to {d:yyyy-MM-dd}");
@@ -924,8 +924,8 @@ namespace Journal.Verification
             {
                 var engine = AgingEngineService.Instance;
 
-                string baseLightPath = engine.GetPreprocessedPaperTexturePathAsync(null, isDarkMode: false).GetAwaiter().GetResult();
-                string baseDarkPath = engine.GetPreprocessedPaperTexturePathAsync(null, isDarkMode: true).GetAwaiter().GetResult();
+                string baseLightPath = engine.GetPreprocessedPaperTexturePathAsync(null, invertTexture: false).GetAwaiter().GetResult();
+                string baseDarkPath = engine.GetPreprocessedPaperTexturePathAsync(null, invertTexture: true).GetAwaiter().GetResult();
 
                 if (baseLightPath == baseDarkPath)
                     throw new Exception("Light and dark texture paths must be distinct files");
@@ -935,7 +935,7 @@ namespace Journal.Verification
                 {
                     bool isDark = (i % 2 == 1);
                     var sw = Stopwatch.StartNew();
-                    string path = engine.GetPreprocessedPaperTexturePathAsync(null, isDarkMode: isDark).GetAwaiter().GetResult();
+                    string path = engine.GetPreprocessedPaperTexturePathAsync(null, invertTexture: isDark).GetAwaiter().GetResult();
                     sw.Stop();
 
                     if (isDark && path != baseDarkPath)
