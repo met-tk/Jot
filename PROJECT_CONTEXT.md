@@ -23,4 +23,4 @@
 - **日历视图**：当日标识由纯色背景改为 1.5px 主题色内嵌边框 + 主题色数字，与记录日热力色明确区分；日视图回退按进入来源原路返回（年视图进入则退回年视图），顶部"返回上级"按钮文案联动；移除日视图右侧辅助日历下冗余的日期状态卡片。
 - **目录视图**：多选工具栏按钮组从右侧移至左侧；修复多选卡片中复选框默认 `MinWidth=120` 撑出的空白竖列。
 - **统计视图**：篇幅梯队与 24 小时时段柱均可点击穿透——篇幅命中复用匹配日记列表；时段命中进入全新"时段记录时间线"，仅列出命中的时间戳记录片段（精确到秒、标注所属日期），点击可跳转当天完整日记；阅读层返回时记忆来路。
-- **安装包**：`Release\Jot_Setup_v1.5.0.exe`（97.5 MB，payload 压缩 92.7 MB / 解压约 236 MB），由本地 `Installer\JotSetup`（net48 WinForms 向导，从原版仓库复制，gitignore 不入库）打包 `Release\Publish` 自包含产物；`Uninstall.exe` 沿用旧 payload 中既有二进制。
+- **安装包**：`Release\Jot_Setup_v1.5.0.exe`（86.1 MB，payload 压缩 85.8 MB / 解压约 218 MB，WinAppSDK 2.1.3），由本地 `Installer\JotSetup`（net48 WinForms 向导，从原版仓库复制，gitignore 不入库）打包 `Release\Publish` 自包含产物；`Uninstall.exe` 沿用旧 payload 中既有二进制。
