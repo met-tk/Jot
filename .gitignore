@@ -30,12 +30,9 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
-# OS & Temp files
-.DS_Store
-Thumbs.db
-*.tmp
-*.swp
+# Agent tooling
 .agents/
+.zcode/
 
 # Raw audio materials
 [Ss]ucai/
