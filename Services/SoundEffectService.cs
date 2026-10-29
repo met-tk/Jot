@@ -178,6 +178,7 @@ namespace Journal.Services
         private long _lastPlayTicks;
         private long _lastEnterPlayTicks;
         private long _lastSavePlayTicks;
+        private bool _isDisposed;
 
         // Fisher-Yates 防连续重复洗牌袋（Shuffle Bag）状态
         private readonly List<int> _clickShuffleBag = new(PcmAudioSynthesizer.ClickVariantCount);
@@ -190,9 +191,16 @@ namespace Journal.Services
         private bool _isBellWaveOutActive;
         private readonly List<WaveOutBufferContext> _activeBellBuffers = new();
         private readonly object _waveOutLock = new();
+        private Timer? _bellCleanupTimer;
 
         public SoundEffectService()
         {
+            var initialSettings = AppSettingsService.Instance.CurrentSettings;
+            IsEnabled = initialSettings.IsSoundEnabled;
+            CurrentTheme = string.IsNullOrWhiteSpace(initialSettings.SoundTheme) ? "Typewriter" : initialSettings.SoundTheme;
+            CurrentSaveTheme = string.IsNullOrWhiteSpace(initialSettings.SaveSoundTheme) ? "TypewriterBell" : initialSettings.SaveSoundTheme;
+            Volume = Math.Clamp(initialSettings.SoundVolume, 0.0, 1.0);
+
             LoadThemeTemplatesLocked(CurrentTheme, refreshScaled: false);
             LoadSaveTemplateLocked(CurrentSaveTheme, refreshScaled: false);
             RefreshScaledCacheLocked();
@@ -264,7 +272,7 @@ namespace Journal.Services
         /// </summary>
         public void PlayKeyClick(bool isSpecialKey = false)
         {
-            if (!IsEnabled || Volume <= 0.001) return;
+            if (_isDisposed || !IsEnabled || Volume <= 0.001) return;
 
             // 20ms 连击与长按按键防爆破节流保护
             long now = DateTime.UtcNow.Ticks;
@@ -319,7 +327,7 @@ namespace Journal.Services
         /// </summary>
         public void PlayEnterKey()
         {
-            if (!IsEnabled || Volume <= 0.001) return;
+            if (_isDisposed || !IsEnabled || Volume <= 0.001) return;
 
             long now = DateTime.UtcNow.Ticks;
             if (now - Interlocked.Read(ref _lastEnterPlayTicks) < 350_000) return;
@@ -341,7 +349,7 @@ namespace Journal.Services
         /// </summary>
         public void PlaySaveSound()
         {
-            if (!IsEnabled || Volume <= 0.001) return;
+            if (_isDisposed || !IsEnabled || Volume <= 0.001) return;
             if (string.IsNullOrWhiteSpace(CurrentSaveTheme) ||
                 string.Equals(CurrentSaveTheme, "None", StringComparison.OrdinalIgnoreCase))
             {
@@ -379,9 +387,12 @@ namespace Journal.Services
                         {
                             lock (_waveOutLock)
                             {
-                                if (!_isBellWaveOutActive || _hWaveOut == IntPtr.Zero)
+                                if (_isDisposed || !_isBellWaveOutActive || _hWaveOut == IntPtr.Zero)
                                 {
-                                    PlaySound(wavBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+                                    if (!_isDisposed)
+                                    {
+                                        PlaySound(wavBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+                                    }
                                     return;
                                 }
 
@@ -397,34 +408,28 @@ namespace Journal.Services
                                 if (ctx.Play())
                                 {
                                     _activeBellBuffers.Add(ctx);
+                                    if (_bellCleanupTimer == null)
+                                    {
+                                        _bellCleanupTimer = new Timer(OnBellCleanupTimerCallback, null, dynamicDelayMs, Timeout.Infinite);
+                                    }
+                                    else
+                                    {
+                                        _bellCleanupTimer.Change(dynamicDelayMs, Timeout.Infinite);
+                                    }
                                 }
                                 else
                                 {
                                     ctx.Dispose();
                                     PlaySound(wavBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
-                                    return;
                                 }
                             }
-
-                            Timer? cleanupTimer = null;
-                            cleanupTimer = new Timer(_ =>
-                            {
-                                try
-                                {
-                                    lock (_waveOutLock)
-                                    {
-                                        CleanupCompletedBellBuffersLocked();
-                                    }
-                                }
-                                finally
-                                {
-                                    cleanupTimer?.Dispose();
-                                }
-                            }, null, dynamicDelayMs, Timeout.Infinite);
                         }
                         catch
                         {
-                            PlaySound(wavBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+                            if (!_isDisposed)
+                            {
+                                PlaySound(wavBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+                            }
                         }
                     });
                     return;
@@ -435,7 +440,19 @@ namespace Journal.Services
                 }
             }
 
-            PlaySound(wavBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+            if (!_isDisposed)
+            {
+                PlaySound(wavBytes, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+            }
+        }
+
+        private void OnBellCleanupTimerCallback(object? state)
+        {
+            lock (_waveOutLock)
+            {
+                if (_isDisposed) return;
+                CleanupCompletedBellBuffersLocked();
+            }
         }
 
         public void SetTheme(string theme)
@@ -617,7 +634,13 @@ namespace Journal.Services
         {
             lock (_waveOutLock)
             {
+                if (_isDisposed) return;
+                _isDisposed = true;
                 _isBellWaveOutActive = false;
+
+                _bellCleanupTimer?.Dispose();
+                _bellCleanupTimer = null;
+
                 if (_hWaveOut != IntPtr.Zero)
                 {
                     waveOutReset(_hWaveOut);

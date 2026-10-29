@@ -79,9 +79,6 @@ namespace Journal.Models
     /// </summary>
     public static class AgingModel
     {
-        public static double TauDays => AgingConstants.DefaultTimeConstantDays;
-        public static double SaturationCeiling => AgingConstants.MaxAgingSaturation;
-
         /// <summary>
         /// 直接计算最终渲染老化强度 (0.0 ~ 0.85)
         /// </summary>

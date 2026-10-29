@@ -37,6 +37,13 @@ namespace Journal
             // 命令行参数拦截：自动化验证模式分发 (在互斥体与 UI 初始化之前执行)
             if (args.Length > 0)
             {
+                if (string.Equals(args[0], "--verify-core", StringComparison.OrdinalIgnoreCase))
+                {
+                    int exitCode = Verification.CoreServicesVerificationRunner.RunTests();
+                    Environment.Exit(exitCode);
+                    return;
+                }
+
                 if (string.Equals(args[0], "--verify-m1", StringComparison.OrdinalIgnoreCase))
                 {
                     int exitCode = Verification.AgingVerificationRunner.RunM1Tests();
@@ -69,11 +76,12 @@ namespace Journal
 
                 if (string.Equals(args[0], "--verify-all", StringComparison.OrdinalIgnoreCase))
                 {
+                    int e0 = Verification.CoreServicesVerificationRunner.RunTests();
                     int e1 = Verification.AgingVerificationRunner.RunM1Tests();
                     int e2 = Verification.AgingVerificationRunner.RunM2Tests();
                     int e3 = Verification.AgingVerificationRunner.RunM3Tests();
                     int e4 = Verification.AgingVerificationRunner.RunTextureStorageTests();
-                    Environment.Exit((e1 == 0 && e2 == 0 && e3 == 0 && e4 == 0) ? 0 : 1);
+                    Environment.Exit((e0 == 0 && e1 == 0 && e2 == 0 && e3 == 0 && e4 == 0) ? 0 : 1);
                     return;
                 }
             }

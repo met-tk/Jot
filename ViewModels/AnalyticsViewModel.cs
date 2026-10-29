@@ -73,55 +73,7 @@ namespace Journal.ViewModels
 
     public partial class AnalyticsViewModel : ObservableObject
     {
-        private static readonly Regex s_hourlyTimestampRegex = new(@"\[(?:\d{4}-\d{2}-\d{2}\s+)?(\d{2}):\d{2}:\d{2}\]", RegexOptions.Compiled);
-        private static readonly Regex s_cleanTimestampRegex = new(@"\[(?:\d{4}-\d{2}-\d{2}\s+)?\d{2}:\d{2}:\d{2}\]", RegexOptions.Compiled);
-        private static readonly Regex s_cleanUrlRegex = new(@"https?://\S+", RegexOptions.Compiled);
-        private static readonly Regex s_cleanMarkdownSymbolsRegex = new(@"[#*`_~>\-\[\]\(\)]", RegexOptions.Compiled);
-        private static readonly Regex s_englishWordRegex = new(@"\b[a-zA-Z]{3,12}\b", RegexOptions.Compiled);
-        private static readonly Regex s_cjkSplitRegex = new(@"[^\u4e00-\u9fa5]+", RegexOptions.Compiled);
-
-        private static readonly HashSet<string> s_stopWords = new(StringComparer.OrdinalIgnoreCase)
-        {
-            "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一", "一个",
-            "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好",
-            "自己", "这", "那", "这个", "那个", "来", "过", "得", "里", "后", "自", "以",
-            "家", "可", "下", "而", "天", "能", "对", "小", "多", "然", "于", "心", "学",
-            "么", "之", "起", "发", "当", "没", "成", "只", "如", "事", "把", "还", "用",
-            "第", "样", "道", "想", "作", "种", "开", "美", "总", "从", "无", "情", "己",
-            "面", "最", "女", "但", "些", "因", "前", "所", "同", "日", "手", "又", "行",
-            "意", "动", "方", "期", "它", "头", "经", "长", "儿", "回", "位", "分", "爱",
-            "老", "给", "名", "法", "间", "斯", "知", "世", "什", "两次", "今天", "明天",
-            "昨天", "现在", "感觉", "开始", "很多", "一些", "觉得", "时间", "时候", "发现",
-            "继续", "完成", "记录", "文字", "生活", "我们", "你们", "他们", "日记", "工作",
-            "虽然", "但是", "因为", "所以", "如果", "不过", "然后", "接着", "以及", "其实",
-            "可以", "可能", "应该", "已经", "一直", "只是", "还是", "比较", "非常", "特别",
-            "这样", "那样", "怎么", "什么", "为什么", "哪里", "哪个", "东西", "事情", "地方"
-        };
-
-        private static readonly HashSet<char> s_singleStopChars = new()
-        {
-            '的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一',
-            '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '看', '好',
-            '这', '那', '来', '过', '得', '里', '后', '自', '以', '可', '下', '而',
-            '天', '能', '对', '小', '多', '然', '于', '么', '之', '起', '没', '成',
-            '只', '如', '事', '把', '还', '用', '第', '样', '道', '想', '作', '从',
-            '无', '但', '些', '因', '前', '所', '同', '日', '又', '行', '它', '经',
-            '长', '回', '位', '分', '给', '间', '知', '什', '真', '太', '被', '让',
-            '跟', '向', '正', '已', '再', '总', '更', '其', '与', '及', '此', '各'
-        };
-
-        private static readonly string[] s_presetLexicon =
-        {
-            "代码", "项目", "设计", "开发", "架构", "重构", "学习", "阅读", "读书", "思考",
-            "灵感", "创作", "散步", "跑步", "运动", "健身", "散心", "晨跑", "夜跑", "公园",
-            "海边", "晚风", "夕阳", "日落", "日出", "阳光", "下雨", "雨夜", "晴天", "清晨",
-            "傍晚", "深夜", "梦境", "睡眠", "失眠", "咖啡", "早餐", "午餐", "晚餐", "美食",
-            "旅行", "街头", "街道", "城市", "回家", "家人", "朋友", "同事", "陪伴", "电影",
-            "音乐", "吉他", "旋律", "安静", "喧嚣", "平静", "放松", "疲惫", "专注", "沉浸",
-            "坚持", "努力", "期待", "快乐", "幸福", "温柔", "焦虑", "迷茫", "释怀", "治愈",
-            "成长", "目标", "计划", "复盘", "总结", "挑战", "回忆", "远方", "风景", "自由",
-            "希望", "健康", "习惯", "步履", "自律", "热爱", "星空", "黄昏", "微风", "散漫"
-        };
+        private static readonly Regex s_hourlyTimestampRegex = WordCloudAnalyzerService.HourlyTimestampRegex;
 
         private static readonly Color[] s_wordCloudPalette =
         {
@@ -138,6 +90,7 @@ namespace Journal.ViewModels
 
         private readonly DiaryIndexService _index = DiaryIndexService.Instance;
         private readonly DiaryStorageService _storage = DiaryStorageService.Instance;
+        private readonly WordCloudAnalyzerService _wordAnalyzer = WordCloudAnalyzerService.Instance;
         private Dictionary<DateTime, string> _cachedContentMap = new();
 
         [ObservableProperty]
@@ -281,7 +234,7 @@ namespace Journal.ViewModels
                 Stats = await _index.CalculateAnalyticsAsync(rawEntries);
 
                 var validEntries = rawEntries
-                    .Where(e => e.WordCount > 0 && !string.IsNullOrWhiteSpace(e.Title) && e.Title != "（今日静默，暂无文字）")
+                    .Where(DiaryIndexService.IsMeaningfulEntry)
                     .ToList();
 
                 ActiveDates.Clear();
@@ -314,15 +267,8 @@ namespace Journal.ViewModels
 
                 try
                 {
-                    var contentMap = await LoadDiaryContentsMapAsync(validEntries);
+                    var (contentMap, hourCounts, topWords) = await _wordAnalyzer.AnalyzeEntriesAsync(validEntries, _storage, 20);
                     _cachedContentMap = contentMap;
-
-                    var (hourCounts, topWords) = await Task.Run(() =>
-                    {
-                        var hours = ComputeHourlyCounts(validEntries, contentMap);
-                        var words = ComputeTopWordCloudStats(validEntries, contentMap);
-                        return (hours, words);
-                    });
 
                     ApplyHourlyCircadian(hourCounts);
                     ApplyWordCloudItems(topWords);
@@ -336,33 +282,6 @@ namespace Journal.ViewModels
             {
                 _loadSemaphore.Release();
             }
-        }
-
-        private async Task<Dictionary<DateTime, string>> LoadDiaryContentsMapAsync(List<DiaryEntry> entries)
-        {
-            var readTasks = entries.Select(async entry =>
-            {
-                string text = string.Empty;
-                try
-                {
-                    text = await _storage.ReadDiaryAsync(entry.Date);
-                }
-                catch { }
-
-                if (string.IsNullOrWhiteSpace(text))
-                {
-                    text = $"{entry.Title}\n{entry.Excerpt}";
-                }
-                return (Date: entry.Date.Date, Text: text);
-            }).ToList();
-
-            var readResults = await Task.WhenAll(readTasks);
-            var map = new Dictionary<DateTime, string>(readResults.Length);
-            foreach (var r in readResults)
-            {
-                map[r.Date] = r.Text;
-            }
-            return map;
         }
 
         private void CalculateLengthTiers(List<DiaryEntry> entries)
@@ -399,41 +318,10 @@ namespace Journal.ViewModels
             }
         }
 
-        private static int[] ComputeHourlyCounts(List<DiaryEntry> entries, Dictionary<DateTime, string> contentMap)
-        {
-            int[] hourCounts = new int[24];
-            int sampleLimit = Math.Min(120, entries.Count);
-
-            for (int i = 0; i < sampleLimit; i++)
-            {
-                var entry = entries[i];
-                bool foundTimestamp = false;
-                if (contentMap.TryGetValue(entry.Date.Date, out string? content) && !string.IsNullOrEmpty(content) && content.Contains('['))
-                {
-                    var matches = s_hourlyTimestampRegex.Matches(content);
-                    foreach (Match m in matches)
-                    {
-                        if (int.TryParse(m.Groups[1].Value, out int h) && h >= 0 && h < 24)
-                        {
-                            hourCounts[h]++;
-                            foundTimestamp = true;
-                        }
-                    }
-                }
-
-                if (!foundTimestamp)
-                {
-                    hourCounts[22]++;
-                }
-            }
-
-            return hourCounts;
-        }
-
         private void ApplyHourlyCircadian(int[] hourCounts)
         {
             int maxCount = hourCounts.Max();
-            if (maxCount == 0) maxCount = 1;
+            int safeDivisor = Math.Max(1, maxCount);
 
             var newHourly = new ObservableCollection<HourlyHeatItem>();
             int peakHour = 0;
@@ -448,8 +336,8 @@ namespace Journal.ViewModels
                     peakHour = h;
                 }
 
-                double pct = (double)c / maxCount * 100;
-                double height = Math.Max(4.0, (double)c / maxCount * 80.0);
+                double pct = (double)c / safeDivisor * 100;
+                double height = Math.Max(4.0, (double)c / safeDivisor * 80.0);
 
                 newHourly.Add(new HourlyHeatItem
                 {
@@ -461,6 +349,12 @@ namespace Journal.ViewModels
                 });
             }
             HourlyStats = newHourly;
+
+            if (maxCount <= 0)
+            {
+                PeakHourDescription = "使用 Ctrl+T 插入时间戳后统计记录集中时段";
+                return;
+            }
 
             string periodTag = peakHour switch
             {
@@ -474,115 +368,6 @@ namespace Journal.ViewModels
             };
 
             PeakHourDescription = $"记录集中时段：{periodTag} ({peakHour:D2}:00 - {peakHour:D2}:59)";
-        }
-
-        /// <summary>
-        /// 单篇级候选词局部归并与精确频次统计（时间复杂度从 O(U * N * L) 降至 O(N * L)，提速数百倍）
-        /// </summary>
-        private static List<(string Word, int TotalCount, int DiaryCount)> ComputeTopWordCloudStats(
-            List<DiaryEntry> entries,
-            Dictionary<DateTime, string> contentMap)
-        {
-            if (entries.Count == 0)
-            {
-                return new List<(string, int, int)>();
-            }
-
-            var globalStats = new Dictionary<string, (int TotalCount, int DiaryCount)>(StringComparer.OrdinalIgnoreCase);
-            var perDiaryCandidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var entry in entries)
-            {
-                if (!contentMap.TryGetValue(entry.Date.Date, out string? content) || string.IsNullOrWhiteSpace(content))
-                {
-                    content = $"{entry.Title}\n{entry.Excerpt}";
-                }
-                if (string.IsNullOrWhiteSpace(content)) continue;
-
-                perDiaryCandidates.Clear();
-
-                // 1. 仅将当前日记中实际出现的预设词纳入本篇候选
-                foreach (var lex in s_presetLexicon)
-                {
-                    if (!s_stopWords.Contains(lex) && content.Contains(lex, StringComparison.OrdinalIgnoreCase))
-                    {
-                        perDiaryCandidates.Add(lex);
-                    }
-                }
-
-                string clean = content.Contains('[') ? s_cleanTimestampRegex.Replace(content, " ") : content;
-                if (clean.Contains("http", StringComparison.OrdinalIgnoreCase))
-                {
-                    clean = s_cleanUrlRegex.Replace(clean, " ");
-                }
-                clean = s_cleanMarkdownSymbolsRegex.Replace(clean, " ");
-
-                // 2. 提取当前日记中的英文单词 (3~12位)
-                var engMatches = s_englishWordRegex.Matches(clean);
-                foreach (Match m in engMatches)
-                {
-                    string w = m.Value.ToLowerInvariant();
-                    if (!s_stopWords.Contains(w))
-                    {
-                        perDiaryCandidates.Add(w);
-                    }
-                }
-
-                // 3. 拆分子句提取当前日记中的中文 2~4 字词
-                var sentences = s_cjkSplitRegex.Split(clean);
-                foreach (var sent in sentences)
-                {
-                    if (sent.Length < 2) continue;
-                    int maxLen = Math.Min(4, sent.Length);
-                    for (int len = 2; len <= maxLen; len++)
-                    {
-                        int limit = sent.Length - len;
-                        for (int i = 0; i <= limit; i++)
-                        {
-                            if (s_singleStopChars.Contains(sent[i]) || s_singleStopChars.Contains(sent[i + len - 1]))
-                            {
-                                continue;
-                            }
-                            string sub = sent.Substring(i, len);
-                            if (!s_stopWords.Contains(sub))
-                            {
-                                perDiaryCandidates.Add(sub);
-                            }
-                        }
-                    }
-                }
-
-                // 4. 仅在当前单篇日记内对本篇提取出的候选词执行非重叠精确计数
-                foreach (var word in perDiaryCandidates)
-                {
-                    int countInDiary = 0;
-                    int idx = 0;
-                    while ((idx = content.IndexOf(word, idx, StringComparison.OrdinalIgnoreCase)) != -1)
-                    {
-                        countInDiary++;
-                        idx += word.Length;
-                    }
-
-                    if (countInDiary > 0)
-                    {
-                        if (globalStats.TryGetValue(word, out var prev))
-                        {
-                            globalStats[word] = (prev.TotalCount + countInDiary, prev.DiaryCount + 1);
-                        }
-                        else
-                        {
-                            globalStats[word] = (countInDiary, 1);
-                        }
-                    }
-                }
-            }
-
-            return globalStats
-                .Select(kvp => (Word: kvp.Key, kvp.Value.TotalCount, kvp.Value.DiaryCount))
-                .OrderByDescending(x => x.TotalCount * 2 + x.DiaryCount)
-                .ThenByDescending(x => x.TotalCount)
-                .Take(20)
-                .ToList();
         }
 
         private static SolidColorBrush? GetPaletteBrush(int rank)
@@ -686,7 +471,7 @@ namespace Journal.ViewModels
 
             var allEntries = await _index.GetAllEntriesAsync();
             var validEntries = allEntries
-                .Where(e => e.WordCount > 0 && !string.IsNullOrWhiteSpace(e.Title) && e.Title != "（今日静默，暂无文字）")
+                .Where(DiaryIndexService.IsMeaningfulEntry)
                 .OrderByDescending(e => e.Date)
                 .ToList();
 
@@ -760,7 +545,7 @@ namespace Journal.ViewModels
 
             var allEntries = await _index.GetAllEntriesAsync();
             var matched = allEntries
-                .Where(e => e.WordCount > 0 && !string.IsNullOrWhiteSpace(e.Title) && e.Title != "（今日静默，暂无文字）")
+                .Where(DiaryIndexService.IsMeaningfulEntry)
                 .Where(e => e.WordCount >= tier.MinWords && e.WordCount < tier.MaxWords)
                 .OrderByDescending(e => e.Date)
                 .Select(e => new DiaryCardItem
@@ -793,7 +578,7 @@ namespace Journal.ViewModels
 
             var allEntries = await _index.GetAllEntriesAsync();
             var validEntries = allEntries
-                .Where(e => e.WordCount > 0 && !string.IsNullOrWhiteSpace(e.Title) && e.Title != "（今日静默，暂无文字）")
+                .Where(DiaryIndexService.IsMeaningfulEntry)
                 .OrderByDescending(e => e.Date)
                 .ToList();
 
@@ -837,7 +622,7 @@ namespace Journal.ViewModels
             string inner = marker.Trim('[', ']').Trim();
             int sp = inner.LastIndexOf(' ');
             string time = sp >= 0 ? inner[(sp + 1)..] : inner;
-            return time.Length == 8 && time[2] == ':' ? time : inner;
+            return time.Contains(':') ? time : inner;
         }
 
         private static string BuildRecordSnippet(string content, int start, int end)
@@ -930,11 +715,11 @@ namespace Journal.ViewModels
         {
             SelectedWord = string.Empty;
             var entry = await _index.GetEntryAsync(date);
-            if (entry != null && entry.WordCount > 0)
+            if (DiaryIndexService.IsMeaningfulEntry(entry))
             {
                 var card = new DiaryCardItem
                 {
-                    Id = entry.Id,
+                    Id = entry!.Id,
                     Date = entry.Date,
                     Title = entry.Title,
                     Excerpt = entry.Excerpt,

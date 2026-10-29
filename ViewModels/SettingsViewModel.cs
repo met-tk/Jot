@@ -17,7 +17,6 @@ namespace Journal.ViewModels
     {
         public string Id { get; set; } = string.Empty;
         public string Title { get; set; } = string.Empty;
-        public string Subtitle { get; set; } = string.Empty;
 
         public override string ToString() => Title;
     }
@@ -34,53 +33,53 @@ namespace Journal.ViewModels
 
         public List<SelectionOptionItem> AvailableSoundThemeOptions { get; } = new()
         {
-            new() { Id = "Typewriter", Title = "复古打字机", Subtitle = "机械字锤敲击与回车铃声" },
-            new() { Id = "CherryBlue", Title = "Cherry 青轴", Subtitle = "清脆段落咔嗒声" },
-            new() { Id = "CherryBrown", Title = "Cherry 茶轴", Subtitle = "轻微段落柔和回弹" },
-            new() { Id = "CherryRed", Title = "Cherry 红轴", Subtitle = "顺滑直上直下轻音" },
-            new() { Id = "MahjongThock", Title = "麻将音", Subtitle = "饱满圆润的客制化键音" },
-            new() { Id = "RaindropSlate", Title = "水滴声", Subtitle = "清澈水滴落石声" },
-            new() { Id = "OldMembrane", Title = "薄膜键盘", Subtitle = "老式台式机键盘闷响" },
-            new() { Id = "WoodBlock", Title = "木鱼", Subtitle = "温润木鱼敲击声" },
-            new() { Id = "VintageTypewriterPro", Title = "机械打字机", Subtitle = "重锤机械打字机实录" },
-            new() { Id = "ClassicTypewriterReal", Title = "老式打字机", Subtitle = "经典铁质打字机实录" },
-            new() { Id = "IPhoneKeyboard", Title = "iPhone 键盘", Subtitle = "手机触屏按键音实录" },
-            new() { Id = "DataMatrixSfx", Title = "电报音", Subtitle = "高频数字脉冲音效" }
+            new() { Id = "Typewriter", Title = "复古打字机" },
+            new() { Id = "CherryBlue", Title = "Cherry 青轴" },
+            new() { Id = "CherryBrown", Title = "Cherry 茶轴" },
+            new() { Id = "CherryRed", Title = "Cherry 红轴" },
+            new() { Id = "MahjongThock", Title = "麻将音" },
+            new() { Id = "RaindropSlate", Title = "水滴声" },
+            new() { Id = "OldMembrane", Title = "薄膜键盘" },
+            new() { Id = "WoodBlock", Title = "木鱼" },
+            new() { Id = "VintageTypewriterPro", Title = "机械打字机" },
+            new() { Id = "ClassicTypewriterReal", Title = "老式打字机" },
+            new() { Id = "IPhoneKeyboard", Title = "iPhone 键盘" },
+            new() { Id = "DataMatrixSfx", Title = "电报音" }
         };
 
         public List<SelectionOptionItem> AvailableSaveSoundThemeOptions { get; } = new()
         {
-            new() { Id = "TypewriterBell", Title = "打字机铃声", Subtitle = "手动保存时播放打字机铜铃声" },
-            new() { Id = "None", Title = "无", Subtitle = "手动保存时不播放提示音" }
+            new() { Id = "TypewriterBell", Title = "打字机铃声" },
+            new() { Id = "None", Title = "无" }
         };
 
         public List<string> AvailableFontFamilies => FontService.Instance.GetInstalledFontFamilies();
 
         public List<SelectionOptionItem> AvailableBackdropOptions { get; } = new()
         {
-            new() { Id = "MicaAlt", Title = "Mica Alt (深层云母)", Subtitle = "深邃分层质感 · 桌面光影立体漫射" },
-            new() { Id = "Mica", Title = "Mica (浅层原生云母)", Subtitle = "轻透采光质感 · 柔和采撷壁纸光色" },
-            new() { Id = "Acrylic", Title = "Acrylic (亚克力毛玻璃)", Subtitle = "高透磨砂质感 · 浓郁高斯模糊与光晕" },
-            new() { Id = "Solid", Title = "纯色经典 (无透光)", Subtitle = "零透光极简 · 纯净实色背景与零 GPU 开销" }
+            new() { Id = "MicaAlt", Title = "Mica Alt (深层云母)" },
+            new() { Id = "Mica", Title = "Mica (浅层原生云母)" },
+            new() { Id = "Acrylic", Title = "Acrylic (亚克力毛玻璃)" },
+            new() { Id = "Solid", Title = "纯色经典 (无透光)" }
         };
 
         public List<SelectionOptionItem> AvailableAmbianceOptions { get; } = new()
         {
-            new() { Id = "Default", Title = "默认 (系统原生 · 翡翠绿)", Subtitle = "现代 Fluent 默认经典绿意" },
-            new() { Id = "WarmPaper", Title = "米黄纸色 (暖琥珀沉香)", Subtitle = "温和羊皮纸面与琥珀暖金" },
-            new() { Id = "MidnightDark", Title = "纯黑 (极夜天际冷蓝)", Subtitle = "极致 OLED 纯黑与天际冷蓝" },
-            new() { Id = "DawnMist", Title = "青墨 (淡雅苍松黛青)", Subtitle = "清幽微透墨青与黛青雅致" },
-            new() { Id = "TwilightLavender", Title = "浅紫 (暮色紫罗兰)", Subtitle = "暮色粉紫与优雅罗兰调" },
-            new() { Id = "ClassicSepia", Title = "复古暖褐 (古籍焦糖)", Subtitle = "复古羊皮卷与古卷沉香" }
+            new() { Id = "Default", Title = "默认 (系统原生 · 翡翠绿)" },
+            new() { Id = "WarmPaper", Title = "米黄纸色 (暖琥珀沉香)" },
+            new() { Id = "MidnightDark", Title = "纯黑 (极夜天际冷蓝)" },
+            new() { Id = "DawnMist", Title = "青墨 (淡雅苍松黛青)" },
+            new() { Id = "TwilightLavender", Title = "浅紫 (暮色紫罗兰)" },
+            new() { Id = "ClassicSepia", Title = "复古暖褐 (古籍焦糖)" }
         };
 
         public List<SelectionOptionItem> AvailableAgingPaperBlendOptions { get; } = new()
         {
-            new() { Id = "Auto", Title = "跟随主题 (默认)", Subtitle = "浅色正片叠底 · 深色反相滤色" },
-            new() { Id = "Multiply", Title = "正片叠底", Subtitle = "纸纹纤维渗透压暗底色" },
-            new() { Id = "Screen", Title = "反相滤色", Subtitle = "反相纸纹柔和漫射提亮底色" },
-            new() { Id = "Overlay", Title = "叠加", Subtitle = "强化纸纹明暗对比层次" },
-            new() { Id = "SoftLight", Title = "柔光", Subtitle = "轻柔纸纹光泽过渡" }
+            new() { Id = "Auto", Title = "跟随主题 (默认)" },
+            new() { Id = "Multiply", Title = "正片叠底" },
+            new() { Id = "Screen", Title = "反相滤色" },
+            new() { Id = "Overlay", Title = "叠加" },
+            new() { Id = "SoftLight", Title = "柔光" }
         };
 
         [ObservableProperty]
@@ -125,7 +124,7 @@ namespace Journal.ViewModels
         // 版本号取自 csproj 的 <Version>（随构建自动同步），避免硬编码后各版本间漂移
         [ObservableProperty]
         private string _appVersionText =
-            $"Jot v{System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0"}";
+            $"Jot v{System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.6.0"}";
 
         // 岁月沉淀拟物渲染系统配置项
         [ObservableProperty]
@@ -136,9 +135,6 @@ namespace Journal.ViewModels
 
         [ObservableProperty]
         private string? _agingInkTexturePath;
-
-        [ObservableProperty]
-        private double _agingIntensityPercent = 85.0;
 
         [ObservableProperty]
         private double _agingPaperIntensityPercent = 85.0;
@@ -160,6 +156,12 @@ namespace Journal.ViewModels
 
         [ObservableProperty]
         private string _agingStatusMessage = string.Empty;
+
+        [ObservableProperty]
+        private string _trashSummaryText = "当前无已移入回收站的日记（删除后自动保留 30 天）";
+
+        [ObservableProperty]
+        private bool _hasTrashItems = false;
 
         [ObservableProperty]
         private string _samplePreviewText = "天地者万物之逆旅也，光阴者百代之过客也。";
@@ -206,6 +208,7 @@ namespace Journal.ViewModels
         {
             _settingsService.SettingsChanged -= OnSettingsChanged;
             _settingsService.SettingsChanged += OnSettingsChanged;
+            RefreshTrashStatus();
         }
 
         public void Unsubscribe()
@@ -237,12 +240,12 @@ namespace Journal.ViewModels
                 IsAgingEnabled = s.IsAgingEnabled;
                 AgingPaperTexturePath = s.AgingPaperTexturePath;
                 AgingInkTexturePath = s.AgingInkTexturePath;
-                AgingIntensityPercent = Math.Round(s.AgingIntensity * 100.0, 0);
                 AgingPaperIntensityPercent = Math.Round(s.AgingPaperIntensity * 100.0, 0);
                 AgingInkIntensityPercent = Math.Round(s.AgingInkIntensity * 100.0, 0);
                 SelectedAgingPaperBlendMode = string.IsNullOrWhiteSpace(s.AgingPaperBlendMode) ? "Auto" : s.AgingPaperBlendMode;
                 UpdateAgingTextureDisplayNames();
                 RefreshAgingCacheSize();
+                RefreshTrashStatus();
 
                 OnPropertyChanged(nameof(PreviewFontFamily));
                 OnPropertyChanged(nameof(PreviewLineHeight));
@@ -508,6 +511,74 @@ namespace Journal.ViewModels
             }
         }
 
+        public void RefreshTrashStatus()
+        {
+            try
+            {
+                DiaryStorageService.Instance.PruneExpiredTrash(30);
+                var items = DiaryStorageService.Instance.GetTrashItems();
+                HasTrashItems = items.Count > 0;
+                if (items.Count > 0)
+                {
+                    var latest = items[0];
+                    TrashSummaryText = $"共有 {items.Count} 篇已删日记（最近：{latest.DiaryDate:yyyy-MM-dd} · {latest.PreviewTitle}）";
+                }
+                else
+                {
+                    TrashSummaryText = "当前无已移入回收站的日记（删除后自动保留 30 天）";
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[RefreshTrashStatus] Error: {ex.Message}");
+            }
+        }
+
+        [RelayCommand]
+        public async Task RestoreLatestTrashAsync()
+        {
+            try
+            {
+                var items = DiaryStorageService.Instance.GetTrashItems();
+                if (items.Count == 0)
+                {
+                    RefreshTrashStatus();
+                    return;
+                }
+
+                var latest = items[0];
+                var restored = await DiaryStorageService.Instance.RestoreFromTrashAsync(latest.FilePath);
+                if (restored)
+                {
+                    RefreshTrashStatus();
+                    TrashSummaryText = $"已成功恢复 {latest.DiaryDate:yyyy-MM-dd} 的日记记录";
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[RestoreLatestTrashAsync] Error: {ex.Message}");
+                TrashSummaryText = $"恢复失败：{ex.Message}";
+            }
+        }
+
+        [RelayCommand]
+        public void EmptyTrash()
+        {
+            try
+            {
+                int count = DiaryStorageService.Instance.EmptyTrash();
+                RefreshTrashStatus();
+                if (count > 0)
+                {
+                    TrashSummaryText = $"已彻底清空回收站（共清理 {count} 篇文件）";
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[EmptyTrash] Error: {ex.Message}");
+            }
+        }
+
         #region 岁月沉淀拟物渲染系统命令与响应
 
         partial void OnIsAgingEnabledChanged(bool value)
@@ -518,21 +589,6 @@ namespace Journal.ViewModels
             {
                 _settingsService.Update(s => s.IsAgingEnabled = value);
                 AgingStatusMessage = value ? "岁月沉淀拟物渲染已启用" : "岁月沉淀已关闭，恢复原生纸张与字迹";
-            }
-            finally
-            {
-                _isSavingLocally = false;
-            }
-        }
-
-        partial void OnAgingIntensityPercentChanged(double value)
-        {
-            if (_isUpdatingFromModel || _isSavingLocally) return;
-            _isSavingLocally = true;
-            try
-            {
-                double normalized = Math.Clamp(value / 100.0, 0.0, 1.0);
-                _settingsService.Update(s => s.AgingIntensity = normalized);
             }
             finally
             {

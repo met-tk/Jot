@@ -1,14 +1,13 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Journal.Common;
+using Journal.Controls;
 using Journal.Models;
 using Journal.Services;
 using Journal.ViewModels;
@@ -18,7 +17,8 @@ namespace Journal.Views
     public sealed partial class AnalyticsPage : Page, IHierarchicalNavigable
     {
         public AnalyticsViewModel ViewModel { get; } = new();
-        private readonly Dictionary<DateTime, CalendarViewDayItem> _realizedDayItems = new();
+        private readonly AuxiliaryCalendarStyler _auxCalendarStyler = new();
+        private bool _isSyncingAuxCalendar;
 
         public AnalyticsPage()
         {
@@ -46,7 +46,7 @@ namespace Journal.Views
             {
                 AmbianceThemeEngine.AmbiancePaletteChanged -= OnAmbiancePaletteChanged;
                 ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
-                _realizedDayItems.Clear();
+                _auxCalendarStyler.Clear();
                 ViewModel.Unsubscribe();
             };
 
@@ -85,12 +85,20 @@ namespace Journal.Views
             if (!this.IsLoaded || ReadingAuxiliaryCalendarView == null || !ReadingAuxiliaryCalendarView.IsLoaded) return;
             try
             {
-                if (date >= ReadingAuxiliaryCalendarView.MinDate.DateTime && date <= ReadingAuxiliaryCalendarView.MaxDate.DateTime)
+                _isSyncingAuxCalendar = true;
+                var target = date.Date;
+                if (target >= ReadingAuxiliaryCalendarView.MinDate.DateTime && target <= ReadingAuxiliaryCalendarView.MaxDate.DateTime)
                 {
-                    ReadingAuxiliaryCalendarView.SetDisplayDate(date);
+                    ReadingAuxiliaryCalendarView.SetDisplayDate(target);
+                    ReadingAuxiliaryCalendarView.SelectedDates.Clear();
+                    ReadingAuxiliaryCalendarView.SelectedDates.Add(new DateTimeOffset(target));
                 }
             }
             catch { }
+            finally
+            {
+                _isSyncingAuxCalendar = false;
+            }
         }
 
         public static Visibility GetVisibility(bool isVisible) => isVisible ? Visibility.Visible : Visibility.Collapsed;
@@ -154,8 +162,8 @@ namespace Journal.Views
             var point = e.GetCurrentPoint(sender as UIElement);
             if (!point.Properties.IsLeftButtonPressed) return;
 
-            var card = (sender as FrameworkElement)?.DataContext as DiaryCardItem 
-                       ?? (sender as FrameworkElement)?.Tag as DiaryCardItem;
+            var card = (sender as FrameworkElement)?.Tag as DiaryCardItem
+                       ?? (sender as FrameworkElement)?.DataContext as DiaryCardItem;
             if (card != null)
             {
                 e.Handled = true;
@@ -183,7 +191,7 @@ namespace Journal.Views
 
         private void ReadingEdit_Click(object sender, RoutedEventArgs e)
         {
-            ShellPage.Current?.NavigateToEditor(ViewModel.ReadingDate);
+            ShellPage.Current?.NavigateToEditor(ViewModel.ReadingDate, ViewModel.SelectedWord);
         }
 
         private void ReadingEdit_AcceleratorInvoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
@@ -191,7 +199,7 @@ namespace Journal.Views
             if (ViewModel.IsReadingMode)
             {
                 args.Handled = true;
-                ShellPage.Current?.NavigateToEditor(ViewModel.ReadingDate);
+                ShellPage.Current?.NavigateToEditor(ViewModel.ReadingDate, ViewModel.SelectedWord);
             }
         }
 
@@ -252,9 +260,6 @@ namespace Journal.Views
 
         #region 当月辅助日历联动
 
-        private static SolidColorBrush? ActiveDayBackgroundBrush => AmbianceThemeEngine.ActiveCalendarDayBackgroundBrush;
-        private static SolidColorBrush? ActiveDayBorderBrush => AmbianceThemeEngine.ActiveCalendarDayRingBrush;
-
         private void OnAmbiancePaletteChanged()
         {
             DispatcherQueue?.TryEnqueue(() =>
@@ -264,84 +269,29 @@ namespace Journal.Views
             });
         }
 
-        private static void ApplyCalendarDayItemStyle(CalendarViewDayItem item, bool hasDiary)
-        {
-            try
-            {
-                item.SetDensityColors(null);
-                if (hasDiary)
-                {
-                    item.Background = ActiveDayBackgroundBrush;
-                    item.BorderBrush = ActiveDayBorderBrush;
-                    item.BorderThickness = new Thickness(1.5);
-                    item.CornerRadius = new CornerRadius(20);
-                }
-                else
-                {
-                    item.ClearValue(Control.BackgroundProperty);
-                    item.ClearValue(Control.BorderBrushProperty);
-                    item.ClearValue(Control.BorderThicknessProperty);
-                }
-            }
-            catch { }
-        }
-
         private void RefreshReadingAuxiliaryCalendar()
         {
             if (ReadingAuxiliaryCalendarView == null || !this.IsLoaded) return;
             try
             {
-                foreach (var kvp in _realizedDayItems.ToList())
-                {
-                    if (kvp.Value != null)
-                    {
-                        ApplyCalendarDayItemStyle(kvp.Value, ViewModel.ActiveDates.Contains(kvp.Key));
-                    }
-                }
+                _auxCalendarStyler.Refresh(ViewModel.ActiveDates);
             }
             catch { }
         }
 
         private void ReadingAuxiliaryCalendarView_CalendarViewDayItemChanging(CalendarView sender, CalendarViewDayItemChangingEventArgs args)
         {
-            if (args.Item == null) return;
-
-            if (args.InRecycleQueue)
-            {
-                var staleKeys = _realizedDayItems
-                    .Where(kv => ReferenceEquals(kv.Value, args.Item))
-                    .Select(kv => kv.Key)
-                    .ToList();
-                foreach (var key in staleKeys)
-                {
-                    _realizedDayItems.Remove(key);
-                }
-                return;
-            }
-
-            if (args.Phase == 0)
-            {
-                var oldKeys = _realizedDayItems
-                    .Where(kv => ReferenceEquals(kv.Value, args.Item))
-                    .Select(kv => kv.Key)
-                    .ToList();
-                foreach (var key in oldKeys)
-                {
-                    _realizedDayItems.Remove(key);
-                }
-
-                var itemDate = args.Item.Date.Date;
-                _realizedDayItems[itemDate] = args.Item;
-                ApplyCalendarDayItemStyle(args.Item, ViewModel.ActiveDates.Contains(itemDate));
-            }
+            _auxCalendarStyler.HandleDayItemChanging(args, ViewModel.ActiveDates);
         }
 
         private async void ReadingAuxiliaryCalendarView_SelectedDatesChanged(CalendarView sender, CalendarViewSelectedDatesChangedEventArgs args)
         {
+            if (_isSyncingAuxCalendar) return;
+
             if (sender.SelectedDates.Count > 0)
             {
                 var selected = sender.SelectedDates[0].Date;
-                if (ViewModel.ActiveDates.Contains(selected))
+                if (selected != ViewModel.ReadingDate.Date && ViewModel.ActiveDates.Contains(selected))
                 {
                     await ViewModel.OpenReadingDateAsync(selected);
                 }
@@ -362,6 +312,11 @@ namespace Journal.Views
             else if (ViewModel.IsWordListMode)
             {
                 ViewModel.CloseWordList();
+                return Task.FromResult(true);
+            }
+            else if (ViewModel.IsHourRecordsMode)
+            {
+                ViewModel.CloseHourRecords();
                 return Task.FromResult(true);
             }
             return Task.FromResult(false);

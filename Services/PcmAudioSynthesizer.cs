@@ -454,16 +454,6 @@ namespace Journal.Services
         }
 
         /// <summary>
-        /// 对 16-bit PCM WAV 应用感知音量缩放（返回新的固定缓冲区）
-        /// </summary>
-        public static byte[] ApplyVolume(byte[] wavBytes, double gain)
-        {
-            byte[]? result = null;
-            ApplyVolumeInto(wavBytes, gain, ref result);
-            return result ?? Array.Empty<byte>();
-        }
-
-        /// <summary>
         /// 确保 Assets/Audio/ 目录中写入完整的 16-bit PCM WAV 资源文件（含 10 变体普通键、3 变体大键与保存音效）
         /// </summary>
         public static void EnsureAudioAssetsWritten(string baseAssetsDir)
@@ -493,8 +483,7 @@ namespace Journal.Services
                         string filePath = Path.Combine(themeDir, fileName);
                         if (!File.Exists(filePath))
                         {
-                            byte[] wav = Generate(theme, variantCode);
-                            File.WriteAllBytes(filePath, wav);
+                            WriteWavAtomically(filePath, Generate(theme, variantCode));
                         }
                     }
                 }
@@ -507,12 +496,26 @@ namespace Journal.Services
                 string saveBellPath = Path.Combine(saveDir, "TypewriterBell.wav");
                 if (!File.Exists(saveBellPath))
                 {
-                    File.WriteAllBytes(saveBellPath, GenerateSaveSound("TypewriterBell"));
+                    WriteWavAtomically(saveBellPath, GenerateSaveSound("TypewriterBell"));
                 }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[EnsureAudioAssetsWritten] Warning: {ex.Message}");
+            }
+        }
+
+        private static void WriteWavAtomically(string targetPath, byte[] wavBytes)
+        {
+            string tempPath = $"{targetPath}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                File.WriteAllBytes(tempPath, wavBytes);
+                File.Move(tempPath, targetPath, overwrite: true);
+            }
+            finally
+            {
+                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
             }
         }
 

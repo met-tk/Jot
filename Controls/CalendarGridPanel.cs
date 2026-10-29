@@ -1,4 +1,5 @@
 using System;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.Foundation;
 
@@ -10,14 +11,47 @@ namespace Journal.Controls
     /// </summary>
     public sealed class CalendarGridPanel : Panel
     {
-        public static double YearZoomCellHeight { get; set; } = 24.0;
+        public static readonly DependencyProperty CellHeightProperty =
+            DependencyProperty.Register(
+                nameof(CellHeight),
+                typeof(double),
+                typeof(CalendarGridPanel),
+                new PropertyMetadata(24.0, OnLayoutMetricChanged));
+
+        public static readonly DependencyProperty MinAdaptiveCellHeightProperty =
+            DependencyProperty.Register(
+                nameof(MinAdaptiveCellHeight),
+                typeof(double),
+                typeof(CalendarGridPanel),
+                new PropertyMetadata(72.0, OnLayoutMetricChanged));
+
+        private static void OnLayoutMetricChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is CalendarGridPanel panel)
+            {
+                panel.InvalidateMeasure();
+                panel.InvalidateArrange();
+            }
+        }
 
         public double RowSpacing { get; set; } = 4;
         public double ColumnSpacing { get; set; } = 4;
-        public double CellHeight { get; set; } = 24;
+
+        public double CellHeight
+        {
+            get => (double)GetValue(CellHeightProperty);
+            set => SetValue(CellHeightProperty, value);
+        }
+
         public bool UseYearZoomHeight { get; set; } = false;
         public bool IsAdaptiveHeight { get; set; } = false;
-        public double MinAdaptiveCellHeight { get; set; } = 72;
+
+        public double MinAdaptiveCellHeight
+        {
+            get => (double)GetValue(MinAdaptiveCellHeightProperty);
+            set => SetValue(MinAdaptiveCellHeightProperty, value);
+        }
+
         public bool FixSixRows { get; set; } = false;
 
         private void ComputeGridMetrics(Size size, out double resolvedWidth, out double colWidth, out int rowCount, out double actualCellHeight)
@@ -33,7 +67,7 @@ namespace Journal.Controls
             rowCount = FixSixRows ? 6 : (count + 6) / 7;
             if (rowCount == 0) rowCount = 6;
 
-            actualCellHeight = UseYearZoomHeight ? YearZoomCellHeight : CellHeight;
+            actualCellHeight = CellHeight;
             if (IsAdaptiveHeight)
             {
                 if (double.IsInfinity(size.Height) || double.IsNaN(size.Height) || size.Height <= 0)

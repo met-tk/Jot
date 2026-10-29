@@ -22,7 +22,7 @@ namespace Journal.Views
 
         private readonly Stack<(CalendarViewMode Mode, DateTime Date, int Year, int Month)> _forwardHistory = new();
         private readonly HashSet<CalendarGridPanel> _yearGridPanels = new();
-        private readonly Dictionary<DateTime, CalendarViewDayItem> _realizedDayItems = new();
+        private readonly AuxiliaryCalendarStyler _auxCalendarStyler = new();
         private CalendarGridPanel? _monthGridPanel;
         private double _currentZoomFactor = 1.0;
         private bool _isSyncingAuxCalendar;
@@ -118,7 +118,7 @@ namespace Journal.Views
             ViewModel.Unsubscribe();
             AmbianceThemeEngine.AmbiancePaletteChanged -= OnAmbiancePaletteChanged;
             _yearGridPanels.Clear();
-            _realizedDayItems.Clear();
+            _auxCalendarStyler.Clear();
             _monthGridPanel = null;
         }
 
@@ -150,8 +150,7 @@ namespace Journal.Views
                 if (sender is CalendarGridPanel panel)
                 {
                     _yearGridPanels.Add(panel);
-                    panel.InvalidateMeasure();
-                    panel.InvalidateArrange();
+                    panel.CellHeight = Math.Round(24.0 * _currentZoomFactor);
                 }
             }
             catch { }
@@ -204,7 +203,6 @@ namespace Journal.Views
         private void ApplyZoomLayout()
         {
             double yearCellH = Math.Round(24.0 * _currentZoomFactor);
-            CalendarGridPanel.YearZoomCellHeight = yearCellH;
 
             // 年视图：自适应更新 UniformGridLayout 的项尺寸与内部 42 天日历格高度
             if (YearUniformGridLayout != null)
@@ -216,8 +214,7 @@ namespace Journal.Views
 
                 foreach (var panel in _yearGridPanels.ToList())
                 {
-                    panel.InvalidateMeasure();
-                    panel.InvalidateArrange();
+                    panel.CellHeight = yearCellH;
                 }
                 YearItemsRepeater?.InvalidateMeasure();
             }
@@ -238,8 +235,6 @@ namespace Journal.Views
                 double naturalCellHeight = viewportAvailableHeight > 0 ? (viewportAvailableHeight - 5 * 6.0) / 6.0 : 76.0;
                 double baseHeight = Math.Max(72.0, naturalCellHeight);
                 gridPanel.MinAdaptiveCellHeight = Math.Clamp(baseHeight * _currentZoomFactor, 54.0, 220.0);
-                gridPanel.InvalidateMeasure();
-                gridPanel.InvalidateArrange();
             }
         }
 
@@ -266,40 +261,12 @@ namespace Journal.Views
             }
         }
 
-        private static void ApplyCalendarDayItemStyle(CalendarViewDayItem item, bool isActive)
-        {
-            try
-            {
-                item.SetDensityColors(null);
-                if (isActive)
-                {
-                    item.Background = AmbianceThemeEngine.ActiveCalendarDayBackgroundBrush;
-                    item.BorderBrush = AmbianceThemeEngine.ActiveCalendarDayRingBrush;
-                    item.BorderThickness = new Thickness(1.5);
-                    item.CornerRadius = new CornerRadius(20);
-                }
-                else
-                {
-                    item.ClearValue(Control.BackgroundProperty);
-                    item.ClearValue(Control.BorderBrushProperty);
-                    item.ClearValue(Control.BorderThicknessProperty);
-                }
-            }
-            catch { }
-        }
-
         private void RefreshDayAuxiliaryCalendar()
         {
             if (DayAuxiliaryCalendarView == null || !this.IsLoaded) return;
             try
             {
-                foreach (var kvp in _realizedDayItems.ToList())
-                {
-                    if (kvp.Value != null)
-                    {
-                        ApplyCalendarDayItemStyle(kvp.Value, ViewModel.ActiveDates.Contains(kvp.Key));
-                    }
-                }
+                _auxCalendarStyler.Refresh(ViewModel.ActiveDates);
             }
             catch { }
         }
@@ -328,36 +295,7 @@ namespace Journal.Views
 
         private void DayAuxiliaryCalendarView_CalendarViewDayItemChanging(CalendarView sender, CalendarViewDayItemChangingEventArgs args)
         {
-            if (args.Item == null) return;
-
-            if (args.InRecycleQueue)
-            {
-                var staleKeys = _realizedDayItems
-                    .Where(kv => ReferenceEquals(kv.Value, args.Item))
-                    .Select(kv => kv.Key)
-                    .ToList();
-                foreach (var key in staleKeys)
-                {
-                    _realizedDayItems.Remove(key);
-                }
-                return;
-            }
-
-            if (args.Phase == 0)
-            {
-                var oldKeys = _realizedDayItems
-                    .Where(kv => ReferenceEquals(kv.Value, args.Item))
-                    .Select(kv => kv.Key)
-                    .ToList();
-                foreach (var key in oldKeys)
-                {
-                    _realizedDayItems.Remove(key);
-                }
-
-                var date = args.Item.Date.Date;
-                _realizedDayItems[date] = args.Item;
-                ApplyCalendarDayItemStyle(args.Item, ViewModel.ActiveDates.Contains(date));
-            }
+            _auxCalendarStyler.HandleDayItemChanging(args, ViewModel.ActiveDates);
         }
 
         private async void DayAuxiliaryCalendarView_SelectedDatesChanged(CalendarView sender, CalendarViewSelectedDatesChangedEventArgs args)
@@ -406,7 +344,6 @@ namespace Journal.Views
             base.OnNavigatedTo(e);
             try
             {
-                // 数据加载与日历同步统一由 OnPageLoaded 执行，避免首次导航时 OnNavigatedTo 与 Loaded 并发触发两次数据库查询与 UI 构建
                 SyncThemeFlag();
                 ApplyZoomLayout();
                 UpdateResponsiveLayout();

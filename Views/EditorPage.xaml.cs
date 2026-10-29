@@ -1,20 +1,17 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Numerics;
 using System.Threading.Tasks;
 using Microsoft.Graphics.Canvas;
-using Microsoft.Graphics.Canvas.Effects;
-using Microsoft.UI.Composition;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Windows.System;
 using Windows.UI.Core;
+using Journal.Common;
+using Journal.Controls;
 using Journal.Models;
 using Journal.Services;
 using Journal.ViewModels;
@@ -25,11 +22,8 @@ namespace Journal.Views
     {
         public EditorViewModel ViewModel { get; } = new();
 
-        // 硬件合成器微震动动画字段 (0-GC Allocation)
-        private Microsoft.UI.Composition.Visual? _paperVisual;
-        private Microsoft.UI.Composition.Compositor? _compositor;
-        private Microsoft.UI.Composition.Vector3KeyFrameAnimation? _normalRecoilAnim;
-        private Microsoft.UI.Composition.Vector3KeyFrameAnimation? _enterRecoilAnim;
+        private readonly PlatenHapticController _platenHaptics;
+        private readonly EditorUndoRedoManager _undoManager = new();
 
         // 字迹遮罩直接采样 RichEditBox 的实际像素，避免第二套文字排版。
         private InkWeatheringRenderer? _inkRenderer;
@@ -46,37 +40,18 @@ namespace Journal.Views
         private bool _isUsingAgedSelectionHighlight;
 
         // 文本模型双向同步防重入标志
-        private bool _isUpdatingEditorFromModel = false;
-        private bool _isUpdatingModelFromEditor = false;
-        private bool _isPerformingUndoRedo = false;
-        private bool _isComposing = false;
-        private bool _wasComposingAtKeyDownStart = false;
-        private long _lastKeyDownSoundTicks = 0;
-        private long _lastCompositionSoundTicks = 0;
+        private bool _isUpdatingEditorFromModel;
+        private bool _isUpdatingModelFromEditor;
+        private bool _isPerformingUndoRedo;
+        private bool _isComposing;
+        private bool _wasComposingAtKeyDownStart;
+        private long _lastKeyDownSoundTicks;
+        private long _lastCompositionSoundTicks;
 
-        // 受控分段撤回/反撤回栈（防止穿透初始加载基线清空全文，并支持 Ctrl+Shift+Z 反撤回）
-        private const int MaxUndoSteps = 200;
-        private readonly struct EditorHistorySnapshot
-        {
-            public string Text { get; }
-            public int SelectionStart { get; }
-            public int SelectionLength { get; }
-
-            public EditorHistorySnapshot(string text, int selectionStart, int selectionLength)
-            {
-                Text = text ?? string.Empty;
-                SelectionStart = Math.Max(0, selectionStart);
-                SelectionLength = Math.Max(0, selectionLength);
-            }
-        }
-
-        private readonly List<EditorHistorySnapshot> _undoStack = new();
-        private readonly Stack<EditorHistorySnapshot> _redoStack = new();
-        private EditorHistorySnapshot _currentConfirmedSnapshot = new(string.Empty, 0, 0);
-        private DateTime _lastEditTimestamp = DateTime.MinValue;
-        private int _lastEditDirection = 0;
-        private int _charsSinceLastSnapshot = 0;
-        private bool _canCoalesceCurrentBurst = false;
+        // 页内查找状态
+        private readonly List<int> _findMatchPositions = new();
+        private int _currentFindMatchIndex = -1;
+        private string? _pendingSearchKeyword;
 
         public EditorPage()
         {
@@ -89,10 +64,8 @@ namespace Journal.Views
             ContentEditorBox.Resources["TextControlForegroundFocused"] = _editorInkBrush;
             ContentEditorBox.Foreground = _editorInkBrush;
 
-            // 1. 初始化字纸微震动动画
-            InitializePlatenVibration();
-
-            // 纸纹由 MainWindow 负责，字迹由编辑器自身的图像负责。
+            // 1. 初始化字纸微震动控制器与字迹风化渲染器
+            _platenHaptics = new PlatenHapticController(EditorPaperContainer);
             InitializeInkWeatheringVisual();
 
             // 2. 挂载编辑器底层键盘事件与内容同步
@@ -104,7 +77,7 @@ namespace Journal.Views
             {
                 _isComposing = false;
                 _wasComposingAtKeyDownStart = false;
-                _canCoalesceCurrentBurst = false;
+                _undoManager.BreakCoalescing();
             };
 
             // 挂载 IME 中文拼音输入法组合事件，按词组建立独立撤回步，并在非键盘选词（如鼠标点击候选词）时补发击键音
@@ -123,7 +96,7 @@ namespace Journal.Views
                 if (now - _lastKeyDownSoundTicks > 800_000)
                 {
                     _lastCompositionSoundTicks = now;
-                    PlayPlatenRecoil(isEnter: false);
+                    _platenHaptics.PlayRecoil(isEnter: false);
                     SoundEffectService.Instance.PlayKeyClick(false);
                 }
 
@@ -136,12 +109,12 @@ namespace Journal.Views
             // 3. 插入时间戳请求
             ViewModel.RequestInsertText += (textToInsert) =>
             {
-                _canCoalesceCurrentBurst = false;
+                _undoManager.BreakCoalescing();
                 ContentEditorBox.Document.Selection.TypeText(textToInsert);
                 ContentEditorBox.Focus(FocusState.Programmatic);
             };
 
-            // 5. 监听视图模型状态
+            // 4. 监听视图模型状态
             ViewModel.PropertyChanged += (s, e) =>
             {
                 if (e.PropertyName == nameof(ViewModel.DiaryContent))
@@ -161,14 +134,13 @@ namespace Journal.Views
                 }
                 else if (e.PropertyName == nameof(ViewModel.IsLoading) && !ViewModel.IsLoading)
                 {
-                    // Commit the paper and ink date after the matching diary content arrives.
                     SetEditorText(ViewModel.DiaryContent);
                     AgingEngineService.Instance.SetCurrentViewingDate(ViewModel.CurrentDate);
                     UpdateInkWeatheringVisual();
                 }
             };
 
-            // 6. 订阅设置变更，动态响应排版字体与字号（严格与 Loaded/Unloaded 生命周期对齐）
+            // 5. 订阅设置变更，动态响应排版字体与字号（严格与 Loaded/Unloaded 生命周期对齐）
             this.Loaded += (s, e) =>
             {
                 AppSettingsService.Instance.SettingsChanged -= OnSettingsChanged;
@@ -181,7 +153,6 @@ namespace Journal.Views
                 AttachEditorScrollViewer();
                 UpdateInkWeatheringVisual(forceTextureReload: false);
 
-                // 页面挂载完成校验：若 RichEditBox 呈现空文档而 ViewModel.DiaryContent 有实际内容，安全重新对齐刷写
                 if (!string.IsNullOrEmpty(ViewModel.DiaryContent))
                 {
                     string clean = GetCleanEditorText();
@@ -214,22 +185,55 @@ namespace Journal.Views
             };
         }
 
+        public void DisposeResources()
+        {
+            try
+            {
+                ViewModel.DisposeAutoSaveTimer();
+                DetachEditorScrollViewer();
+                _inkRenderer?.Dispose();
+                _inkRenderer = null;
+            }
+            catch { }
+        }
+
         protected override async void OnNavigatedTo(NavigationEventArgs e)
         {
             base.OnNavigatedTo(e);
             DateTime targetDate = (e.Parameter is DateTime d) ? d.Date : DateTime.Today;
 
-            // 关键草稿与内存保护守卫：
-            // 若导航回的目标日期正是当前正在编辑的同一天，且内存中已有正文或未保存输入，绝不从磁盘重新载入！
-            // 完整保留用户未保存的输入内容、光标位置与撤回历史栈
-            if (ViewModel.CurrentDate.Date == targetDate.Date && 
-                (!string.IsNullOrEmpty(ViewModel.DiaryContent) || ViewModel.HasUnsavedChanges))
+            if (ViewModel.CurrentDate.Date == targetDate.Date)
             {
-                AgingEngineService.Instance.SetCurrentViewingDate(targetDate);
-                ApplyTypography(AppSettingsService.Instance.CurrentSettings);
-                await UpdateInkWeatheringVisualAsync();
-                ContentEditorBox.Focus(FocusState.Programmatic);
-                return;
+                if (ViewModel.HasUnsavedChanges)
+                {
+                    AgingEngineService.Instance.SetCurrentViewingDate(targetDate);
+                    ApplyTypography(AppSettingsService.Instance.CurrentSettings);
+                    await UpdateInkWeatheringVisualAsync();
+                    ApplyPendingSearchHighlightIfAny();
+                    ContentEditorBox.Focus(FocusState.Programmatic);
+                    return;
+                }
+
+                if (!string.IsNullOrEmpty(ViewModel.DiaryContent))
+                {
+                    bool existsOnDisk = DiaryStorageService.Instance.DiaryExists(targetDate);
+                    if (existsOnDisk)
+                    {
+                        string diskContent = await DiaryStorageService.Instance.LoadDiaryContentAsync(targetDate);
+                        if (string.Equals(
+                            DiaryStorageService.NormalizeLineEndings(diskContent),
+                            DiaryStorageService.NormalizeLineEndings(ViewModel.DiaryContent),
+                            StringComparison.Ordinal))
+                        {
+                            AgingEngineService.Instance.SetCurrentViewingDate(targetDate);
+                            ApplyTypography(AppSettingsService.Instance.CurrentSettings);
+                            await UpdateInkWeatheringVisualAsync();
+                            ApplyPendingSearchHighlightIfAny();
+                            ContentEditorBox.Focus(FocusState.Programmatic);
+                            return;
+                        }
+                    }
+                }
             }
 
             await LoadDateExplicitlyAsync(targetDate);
@@ -246,7 +250,6 @@ namespace Journal.Views
         {
             int version = ++_dateLoadVersion;
 
-            // 若之前在编辑其他日期且有未保存更改，先持久化旧日期
             if (ViewModel.CurrentDate.Date != targetDate.Date && ViewModel.HasUnsavedChanges)
             {
                 string liveText = GetCleanEditorText();
@@ -259,23 +262,6 @@ namespace Journal.Views
             if (AgingEngineService.Instance.CalculateAgingIntensity(
                     targetDate, settings.AgingInkIntensity, settings.IsAgingEnabled) > 0.0001)
             {
-                // Prepare the texture and compositor before the new document is shown.
-                // The currently visible diary keeps its exact rendering while this runs.
-                if (!IsLoaded)
-                {
-                    var loaded = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                    RoutedEventHandler? onLoaded = null;
-                    onLoaded = (s, e) =>
-                    {
-                        Loaded -= onLoaded;
-                        loaded.TrySetResult(true);
-                    };
-                    Loaded += onLoaded;
-                    await loaded.Task;
-                }
-                if (version != _dateLoadVersion) return;
-                // A settings/theme refresh can supersede an in-flight compositor
-                // update. Recheck the prepared brush before publishing old text.
                 for (int attempt = 0; attempt < 3 && !IsInkTexturePrepared(); attempt++)
                 {
                     await UpdateInkWeatheringVisualAsync(preloadOnly: true);
@@ -284,6 +270,7 @@ namespace Journal.Views
             }
             if (version != _dateLoadVersion) return;
             await ViewModel.LoadDateAsync(targetDate);
+            ApplyPendingSearchHighlightIfAny();
         }
 
         protected override void OnNavigatingFrom(NavigatingCancelEventArgs e)
@@ -316,60 +303,6 @@ namespace Journal.Views
             });
         }
 
-        #region 拟物字纸微震动 (Platen Recoil Vibration)
-
-        private void InitializePlatenVibration()
-        {
-            try
-            {
-                ElementCompositionPreview.SetIsTranslationEnabled(EditorPaperContainer, true);
-                _paperVisual = ElementCompositionPreview.GetElementVisual(EditorPaperContainer);
-                _compositor = _paperVisual.Compositor;
-
-                // 常规击键：瞬间下沉 1.1px，50ms 弹性平滑复位
-                _normalRecoilAnim = _compositor.CreateVector3KeyFrameAnimation();
-                _normalRecoilAnim.Duration = TimeSpan.FromMilliseconds(50);
-                _normalRecoilAnim.InsertKeyFrame(0.0f, new Vector3(0, 0, 0));
-                _normalRecoilAnim.InsertKeyFrame(0.24f, new Vector3(0, 1.1f, 0),
-                    _compositor.CreateCubicBezierEasingFunction(new Vector2(0.1f, 0.9f), new Vector2(0.2f, 1.0f)));
-                _normalRecoilAnim.InsertKeyFrame(1.0f, new Vector3(0, 0, 0),
-                    _compositor.CreateCubicBezierEasingFunction(new Vector2(0.4f, 0.0f), new Vector2(0.2f, 1.0f)));
-
-                // 回车换行：机架推拉下沉 2.2px，75ms 阻尼复位
-                _enterRecoilAnim = _compositor.CreateVector3KeyFrameAnimation();
-                _enterRecoilAnim.Duration = TimeSpan.FromMilliseconds(75);
-                _enterRecoilAnim.InsertKeyFrame(0.0f, new Vector3(0, 0, 0));
-                _enterRecoilAnim.InsertKeyFrame(0.20f, new Vector3(0, 2.2f, 0),
-                    _compositor.CreateCubicBezierEasingFunction(new Vector2(0.1f, 0.9f), new Vector2(0.2f, 1.0f)));
-                _enterRecoilAnim.InsertKeyFrame(1.0f, new Vector3(0, 0, 0),
-                    _compositor.CreateCubicBezierEasingFunction(new Vector2(0.4f, 0.0f), new Vector2(0.2f, 1.0f)));
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[PlatenVibration Init Error] {ex.Message}");
-            }
-        }
-
-        private void PlayPlatenRecoil(bool isEnter)
-        {
-            if (!AppSettingsService.Instance.CurrentSettings.IsHapticVibrationEnabled || _paperVisual == null) return;
-
-            try
-            {
-                if (isEnter && _enterRecoilAnim != null)
-                {
-                    _paperVisual.StartAnimation("Translation", _enterRecoilAnim);
-                }
-                else if (_normalRecoilAnim != null)
-                {
-                    _paperVisual.StartAnimation("Translation", _normalRecoilAnim);
-                }
-            }
-            catch { }
-        }
-
-        #endregion
-
         #region 动态排版与字体 (Typography)
 
         public void ApplyTypography(AppSettings settings)
@@ -385,21 +318,16 @@ namespace Journal.Views
 
                 var family = AppSettings.BuildXamlFontFamily(settings.FontFamily);
 
-                // 1. 仅当字体或字号确实改变时更新控件属性，避免无效布局重排
                 if (fontOrSizeChanged)
                 {
                     ContentEditorBox.FontFamily = family;
                     ContentEditorBox.FontSize = settings.FontSize;
                 }
 
-                // 统一精准行高计算（像素与磅）：
-                // 在中文字体（如思源宋体、微软雅黑）中，自然行高约为字号的 1.35 倍
-                // 当 settings.LineSpacing = 1.2 时，实际单行垂直间隙 = FontSize * LineSpacing * 1.35
                 double lineSpacingMultiplier = Math.Clamp(settings.LineSpacing, 1.2, 2.2);
                 double exactLineHeightPx = Math.Round(settings.FontSize * lineSpacingMultiplier * 1.35, 1);
-                float exactLineHeightPt = (float)(exactLineHeightPx * 0.75); // 1 pt = 4/3 px
+                float exactLineHeightPt = (float)(exactLineHeightPx * 0.75);
 
-                // 编辑器独占排版；纹理跟随其已排好的字形，不再猜测行高。
                 ApplyDocumentLineSpacingOnly(exactLineHeightPt);
             }
             catch (Exception ex)
@@ -431,7 +359,7 @@ namespace Journal.Views
 
         #endregion
 
-        #region 键盘敲击音效与事件捕获
+        #region 键盘敲击音效与快捷键路由
 
         private void OnPagePreviewKeyDown(object sender, KeyRoutedEventArgs e)
         {
@@ -444,6 +372,13 @@ namespace Journal.Views
             bool isAlt = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Menu)
                           & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
 
+            if (e.Key == VirtualKey.Escape && FindBarBorder != null && FindBarBorder.Visibility == Visibility.Visible)
+            {
+                e.Handled = true;
+                CloseFindBar();
+                return;
+            }
+
             if (isCtrl && !isAlt)
             {
                 if (e.Key == VirtualKey.Z)
@@ -451,37 +386,36 @@ namespace Journal.Views
                     e.Handled = true;
                     if (isShift)
                     {
-                        // Ctrl + Shift + Z: 撤销撤回（重做 Redo）
                         PerformRedo();
                     }
                     else
                     {
-                        // Ctrl + Z: 撤回（Undo）
                         PerformUndo();
                     }
                     return;
                 }
                 else if (e.Key == VirtualKey.Y && !isShift)
                 {
-                    // 兼容 Ctrl + Y 重做
                     e.Handled = true;
                     PerformRedo();
                     return;
                 }
                 else if (e.Key == VirtualKey.S && !isShift)
                 {
-                    // Ctrl + S: 手动保存日记并播放保存反馈音效
                     e.Handled = true;
                     TriggerManualSave();
                     return;
                 }
                 else if (e.Key == VirtualKey.T && !isShift)
                 {
-                    // Ctrl + T: 插入时间戳
                     e.Handled = true;
-                    string liveText = GetCleanEditorText();
-                    SyncViewModelContent(liveText);
-                    ViewModel.InsertTimestamp();
+                    TriggerInsertTimestamp();
+                    return;
+                }
+                else if (e.Key == VirtualKey.F && !isShift)
+                {
+                    e.Handled = true;
+                    OpenFindBar();
                     return;
                 }
             }
@@ -493,7 +427,6 @@ namespace Journal.Views
             bool wasComposing = _wasComposingAtKeyDownStart || _isComposing;
             _wasComposingAtKeyDownStart = false;
 
-            // 1. 过滤 Ctrl / Alt 组合命令快捷键 (如 Ctrl+S, Ctrl+T, Ctrl+C, Ctrl+Z, Alt+Tab 等)
             bool isCtrl = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)
                            & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
             bool isAlt = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Menu)
@@ -503,7 +436,6 @@ namespace Journal.Views
                 return;
             }
 
-            // 2. 过滤独立功能、导航与修饰键 (Shift, Alt, CapsLock, Win, 方向键, F1~F12 等)
             if (key is VirtualKey.Shift or VirtualKey.LeftShift or VirtualKey.RightShift
                 or VirtualKey.Control or VirtualKey.LeftControl or VirtualKey.RightControl
                 or VirtualKey.Menu or VirtualKey.LeftMenu or VirtualKey.RightMenu
@@ -523,27 +455,25 @@ namespace Journal.Views
                 return;
             }
 
-            // 3. 回车换行专属音效与字纸深回弹（若处于 IME 拼音组合态按回车直接上屏英文，则按常规上屏键发声）
             if (key == VirtualKey.Enter)
             {
                 _lastKeyDownSoundTicks = now;
                 if (wasComposing)
                 {
-                    PlayPlatenRecoil(isEnter: false);
+                    _platenHaptics.PlayRecoil(isEnter: false);
                     SoundEffectService.Instance.PlayKeyClick(false);
                 }
                 else
                 {
-                    PlayPlatenRecoil(isEnter: true);
+                    _platenHaptics.PlayRecoil(isEnter: true);
                     SoundEffectService.Instance.PlayEnterKey();
                 }
                 return;
             }
 
-            // 4. 有效击键（含常规字母数字、标点符号、空格退格以及 IME 中文拼音 VirtualKey.ProcessKey = 229）
             _lastKeyDownSoundTicks = now;
             bool isSpecial = (key is VirtualKey.Space or VirtualKey.Back or VirtualKey.Delete or VirtualKey.Tab);
-            PlayPlatenRecoil(isEnter: false);
+            _platenHaptics.PlayRecoil(isEnter: false);
             SoundEffectService.Instance.PlayKeyClick(isSpecial);
         }
 
@@ -560,17 +490,11 @@ namespace Journal.Views
             if (_isUpdatingEditorFromModel || _isPerformingUndoRedo || _isComposing || ViewModel.IsLoading)
                 return;
 
-            // Cursor movement is frequent in long diaries; use the text already
-            // recorded by TextChanged instead of reading the entire document.
             if (ContentEditorBox.Document != null)
             {
                 int selStart = Math.Max(0, ContentEditorBox.Document.Selection.StartPosition);
                 int selLen = Math.Abs(ContentEditorBox.Document.Selection.Length);
-                if (Math.Abs(selStart - _currentConfirmedSnapshot.SelectionStart) > 1 || selLen != _currentConfirmedSnapshot.SelectionLength)
-                {
-                    _canCoalesceCurrentBurst = false;
-                }
-                _currentConfirmedSnapshot = new EditorHistorySnapshot(_currentConfirmedSnapshot.Text, selStart, selLen);
+                _undoManager.UpdateSelection(selStart, selLen);
             }
         }
 
@@ -607,85 +531,14 @@ namespace Journal.Views
             }
         }
 
-        private void ResetUndoHistory(string baselineText)
-        {
-            _undoStack.Clear();
-            _redoStack.Clear();
-            string safe = baselineText ?? string.Empty;
-            _currentConfirmedSnapshot = new EditorHistorySnapshot(safe, safe.Length, 0);
-            _lastEditTimestamp = DateTime.MinValue;
-            _lastEditDirection = 0;
-            _charsSinceLastSnapshot = 0;
-            _canCoalesceCurrentBurst = false;
-        }
-
-        private void PushToUndoStack(EditorHistorySnapshot snapshot)
-        {
-            if (_undoStack.Count > 0 && string.Equals(_undoStack[^1].Text, snapshot.Text, StringComparison.Ordinal))
-            {
-                _undoStack[^1] = snapshot;
-                return;
-            }
-
-            if (_undoStack.Count >= MaxUndoSteps)
-            {
-                // 始终保留 index 0（初始加载基线），移除次旧的步骤
-                _undoStack.RemoveAt(1);
-            }
-            _undoStack.Add(snapshot);
-        }
-
         private void RecordUserEditForUndo(string cleanText, bool forceNewStep)
         {
             if (_isUpdatingEditorFromModel || _isPerformingUndoRedo || ViewModel.IsLoading)
                 return;
 
-            string prevText = _currentConfirmedSnapshot.Text;
-            if (string.Equals(prevText, cleanText, StringComparison.Ordinal))
-                return;
-
-            DateTime now = DateTime.UtcNow;
-            double elapsedMs = (now - _lastEditTimestamp).TotalMilliseconds;
-            int deltaLen = cleanText.Length - prevText.Length;
-            int editDirection = deltaLen > 0 ? 1 : (deltaLen < 0 ? -1 : 0);
-
             int selStart = Math.Max(0, ContentEditorBox.Document.Selection.StartPosition);
             int selLen = Math.Abs(ContentEditorBox.Document.Selection.Length);
-
-            bool shouldStartNewStep = forceNewStep
-                || !_canCoalesceCurrentBurst
-                || _undoStack.Count == 0
-                || elapsedMs > 450
-                || editDirection != _lastEditDirection
-                || Math.Abs(deltaLen) > 1
-                || _charsSinceLastSnapshot >= 10;
-
-            if (!shouldStartNewStep && deltaLen == 1 && selStart > 0 && selStart <= cleanText.Length)
-            {
-                char insertedChar = cleanText[selStart - 1];
-                if (insertedChar is '\r' or '\n' or ' ' or '\t'
-                    or '，' or '。' or '！' or '？' or '；' or '：' or '、'
-                    or ',' or '.' or '!' or '?' or ';' or ':')
-                {
-                    shouldStartNewStep = true;
-                }
-            }
-
-            if (shouldStartNewStep)
-            {
-                PushToUndoStack(_currentConfirmedSnapshot);
-                _canCoalesceCurrentBurst = !forceNewStep && Math.Abs(deltaLen) == 1;
-                _charsSinceLastSnapshot = 1;
-            }
-            else
-            {
-                _charsSinceLastSnapshot++;
-            }
-
-            _redoStack.Clear();
-            _currentConfirmedSnapshot = new EditorHistorySnapshot(cleanText, selStart, selLen);
-            _lastEditTimestamp = now;
-            _lastEditDirection = editDirection;
+            _undoManager.RecordEdit(cleanText, selStart, selLen, forceNewStep);
         }
 
         private void PerformUndo()
@@ -694,21 +547,14 @@ namespace Journal.Views
                 return;
 
             string currentLiveText = GetCleanEditorText();
-            if (!string.Equals(currentLiveText, _currentConfirmedSnapshot.Text, StringComparison.Ordinal))
-            {
-                RecordUserEditForUndo(currentLiveText, forceNewStep: true);
-            }
+            int selStart = Math.Max(0, ContentEditorBox.Document.Selection.StartPosition);
+            int selLen = Math.Abs(ContentEditorBox.Document.Selection.Length);
             _isComposing = false;
 
-            if (_undoStack.Count == 0)
-                return;
-
-            int lastIdx = _undoStack.Count - 1;
-            EditorHistorySnapshot targetSnapshot = _undoStack[lastIdx];
-            _undoStack.RemoveAt(lastIdx);
-
-            _redoStack.Push(_currentConfirmedSnapshot);
-            ApplyHistorySnapshot(targetSnapshot);
+            if (_undoManager.TryUndo(currentLiveText, selStart, selLen, out var targetSnapshot))
+            {
+                ApplyHistorySnapshot(targetSnapshot);
+            }
         }
 
         private void PerformRedo()
@@ -718,19 +564,15 @@ namespace Journal.Views
 
             _isComposing = false;
 
-            if (_redoStack.Count == 0)
-                return;
-
-            EditorHistorySnapshot targetSnapshot = _redoStack.Pop();
-            PushToUndoStack(_currentConfirmedSnapshot);
-            ApplyHistorySnapshot(targetSnapshot);
+            if (_undoManager.TryRedo(out var targetSnapshot))
+            {
+                ApplyHistorySnapshot(targetSnapshot);
+            }
         }
 
         private void ApplyHistorySnapshot(EditorHistorySnapshot snapshot)
         {
             _isPerformingUndoRedo = true;
-            _canCoalesceCurrentBurst = false;
-            _charsSinceLastSnapshot = 0;
             try
             {
                 ContentEditorBox.Document.SetText(TextSetOptions.None, snapshot.Text);
@@ -748,7 +590,7 @@ namespace Journal.Views
                 ContentEditorBox.Document.UndoLimit = 0;
                 ContentEditorBox.Document.UndoLimit = 100;
 
-                _currentConfirmedSnapshot = new EditorHistorySnapshot(actualText, start, end - start);
+                _undoManager.ConfirmAppliedSnapshot(actualText, start, end - start);
 
                 SyncViewModelContent(actualText);
                 ContentEditorBox.Focus(FocusState.Programmatic);
@@ -781,7 +623,8 @@ namespace Journal.Views
                 ContentEditorBox.Document.UndoLimit = 100;
 
                 string actualText = GetCleanEditorText();
-                ResetUndoHistory(actualText);
+                ViewModel.AlignLoadedContent(actualText);
+                _undoManager.ResetHistory(actualText);
             }
             finally
             {
@@ -800,6 +643,198 @@ namespace Journal.Views
         }
 
         #endregion
+
+        #region 页内查找与搜索词跨页定位 (Ctrl+F)
+
+        public void OpenFindBarWithKeyword(string? keyword)
+        {
+            if (string.IsNullOrWhiteSpace(keyword)) return;
+            _pendingSearchKeyword = keyword.Trim();
+            if (!ViewModel.IsLoading)
+            {
+                ApplyPendingSearchHighlightIfAny();
+            }
+        }
+
+        private void ApplyPendingSearchHighlightIfAny()
+        {
+            if (string.IsNullOrWhiteSpace(_pendingSearchKeyword)) return;
+            string kw = _pendingSearchKeyword;
+            _pendingSearchKeyword = null;
+
+            if (FindBarBorder != null && FindQueryTextBox != null)
+            {
+                FindBarBorder.Visibility = Visibility.Visible;
+                FindQueryTextBox.Text = kw;
+                RebuildFindMatchesAndSelect(kw, selectFirst: true, focusEditorSelection: false);
+            }
+        }
+
+        private void OpenFindBar()
+        {
+            if (FindBarBorder == null || FindQueryTextBox == null) return;
+            FindBarBorder.Visibility = Visibility.Visible;
+
+            string selectedText = ContentEditorBox.Document.Selection.Text?.Trim() ?? string.Empty;
+            if (!string.IsNullOrEmpty(selectedText) && selectedText.Length <= 40 && !selectedText.Contains('\r'))
+            {
+                FindQueryTextBox.Text = selectedText;
+            }
+            else if (!string.IsNullOrWhiteSpace(FindQueryTextBox.Text))
+            {
+                RebuildFindMatchesAndSelect(FindQueryTextBox.Text.Trim(), selectFirst: true, focusEditorSelection: false);
+            }
+
+            FindQueryTextBox.Focus(FocusState.Programmatic);
+            FindQueryTextBox.SelectAll();
+        }
+
+        private void CloseFindBar()
+        {
+            if (FindBarBorder != null)
+            {
+                FindBarBorder.Visibility = Visibility.Collapsed;
+            }
+            _findMatchPositions.Clear();
+            _currentFindMatchIndex = -1;
+            ContentEditorBox.Focus(FocusState.Programmatic);
+        }
+
+        private void OpenFindBarButton_Click(object sender, RoutedEventArgs e) => OpenFindBar();
+
+        private void CloseFindBarButton_Click(object sender, RoutedEventArgs e) => CloseFindBar();
+
+        private void FindQueryTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            string query = FindQueryTextBox?.Text?.Trim() ?? string.Empty;
+            RebuildFindMatchesAndSelect(query, selectFirst: true, focusEditorSelection: false);
+        }
+
+        private void FindQueryTextBox_KeyDown(object sender, KeyRoutedEventArgs e)
+        {
+            if (e.Key == VirtualKey.Enter)
+            {
+                e.Handled = true;
+                bool isShift = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift)
+                                & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
+                StepFindMatch(forward: !isShift);
+            }
+            else if (e.Key == VirtualKey.Escape)
+            {
+                e.Handled = true;
+                CloseFindBar();
+            }
+        }
+
+        private void FindPreviousButton_Click(object sender, RoutedEventArgs e) => StepFindMatch(forward: false);
+
+        private void FindNextButton_Click(object sender, RoutedEventArgs e) => StepFindMatch(forward: true);
+
+        private void RebuildFindMatchesAndSelect(string query, bool selectFirst, bool focusEditorSelection)
+        {
+            _findMatchPositions.Clear();
+            _currentFindMatchIndex = -1;
+
+            if (string.IsNullOrEmpty(query) || ContentEditorBox.Document == null)
+            {
+                if (FindMatchStatusText != null) FindMatchStatusText.Text = "0 / 0";
+                return;
+            }
+
+            ContentEditorBox.Document.GetText(TextGetOptions.None, out string rawDocText);
+            if (string.IsNullOrEmpty(rawDocText))
+            {
+                if (FindMatchStatusText != null) FindMatchStatusText.Text = "0 / 0";
+                return;
+            }
+
+            int idx = 0;
+            while ((idx = rawDocText.IndexOf(query, idx, StringComparison.OrdinalIgnoreCase)) != -1)
+            {
+                _findMatchPositions.Add(idx);
+                idx += query.Length;
+                if (_findMatchPositions.Count >= 500) break;
+            }
+
+            if (_findMatchPositions.Count == 0)
+            {
+                if (FindMatchStatusText != null) FindMatchStatusText.Text = "0 / 0";
+                return;
+            }
+
+            if (selectFirst)
+            {
+                _currentFindMatchIndex = 0;
+                SelectCurrentFindMatch(query.Length, focusEditorSelection);
+            }
+        }
+
+        private void StepFindMatch(bool forward)
+        {
+            string query = FindQueryTextBox?.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrEmpty(query)) return;
+
+            if (_findMatchPositions.Count == 0)
+            {
+                RebuildFindMatchesAndSelect(query, selectFirst: true, focusEditorSelection: false);
+                return;
+            }
+
+            if (forward)
+            {
+                _currentFindMatchIndex = (_currentFindMatchIndex + 1) % _findMatchPositions.Count;
+            }
+            else
+            {
+                _currentFindMatchIndex = (_currentFindMatchIndex - 1 + _findMatchPositions.Count) % _findMatchPositions.Count;
+            }
+
+            SelectCurrentFindMatch(query.Length, focusEditorSelection: false);
+        }
+
+        private void SelectCurrentFindMatch(int queryLength, bool focusEditorSelection)
+        {
+            if (_currentFindMatchIndex < 0 || _currentFindMatchIndex >= _findMatchPositions.Count) return;
+
+            int pos = _findMatchPositions[_currentFindMatchIndex];
+            if (FindMatchStatusText != null)
+            {
+                FindMatchStatusText.Text = $"{_currentFindMatchIndex + 1} / {_findMatchPositions.Count}";
+            }
+
+            try
+            {
+                ContentEditorBox.Document.Selection.SetRange(pos, pos + queryLength);
+                ContentEditorBox.Document.Selection.ScrollIntoView(PointOptions.None);
+                if (focusEditorSelection)
+                {
+                    ContentEditorBox.Focus(FocusState.Programmatic);
+                }
+            }
+            catch { }
+        }
+
+        #endregion
+
+        private void TriggerInsertTimestamp()
+        {
+            string liveText = GetCleanEditorText();
+            SyncViewModelContent(liveText);
+
+            string? prefixContext = null;
+            if (ContentEditorBox.Document != null)
+            {
+                int selStart = Math.Clamp(ContentEditorBox.Document.Selection.StartPosition, 0, liveText.Length);
+                prefixContext = liveText[..selStart];
+            }
+
+            ViewModel.InsertTimestampAtContext(prefixContext);
+        }
+
+        private void TimestampButton_Click(object sender, RoutedEventArgs e)
+        {
+            TriggerInsertTimestamp();
+        }
 
         private void TriggerManualSave()
         {
@@ -924,9 +959,9 @@ namespace Journal.Views
                 if (!forceTextureReload && IsInkTexturePrepared()) return;
                 string? customPath = settings.AgingInkTexturePath;
                 string texturePath = await AgingEngineService.Instance.GetInkWeatheringMaskPathAsync(customPath);
-                if (version != _inkUpdateVersion) return;
+                if (version != _inkUpdateVersion || _inkRenderer == null) return;
                 newTexture = await _inkRenderer.LoadTextureAsync(texturePath);
-                if (version != _inkUpdateVersion) return;
+                if (version != _inkUpdateVersion || _inkRenderer == null) return;
                 _inkRenderer.SetTexture(newTexture);
                 newTexture = null;
                 _currentInkTexturePath = customPath;
@@ -941,6 +976,7 @@ namespace Journal.Views
                 newTexture?.Dispose();
             }
         }
+
         private static Windows.UI.Color GetBaseAgedInkColor(double intensity, bool isDark)
         {
             var fresh = isDark
@@ -998,9 +1034,6 @@ namespace Journal.Views
                 defaultFormat.ForegroundColor = targetColor;
                 doc.SetDefaultCharacterFormat(defaultFormat);
 
-                // RichEditBox may retain explicit formatting on existing runs.
-                // Recolor them when the date/theme changes; typing uses the same
-                // default color and does not trigger this whole-document pass.
                 var wholeStory = doc.GetRange(0, int.MaxValue);
                 wholeStory.CharacterFormat.ForegroundColor = targetColor;
                 _lastAppliedInkColor = targetColor;

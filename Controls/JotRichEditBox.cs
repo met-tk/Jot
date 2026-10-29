@@ -9,13 +9,13 @@ namespace Journal.Controls
     /// <summary>
     /// 编辑器专用 RichEditBox。
     /// 绕过 WinUI 文本控件光标闪烁框架 Bug (microsoft-ui-xaml#11204)：
-    /// 框架的异步光标评估会在 I-beam/箭头间交替，且不走 WM_SETCURSOR，无法在 Win32 层拦截。
-    /// 双保险：元素级 ProtectedCursor 显式声明文本光标 + 指针悬停期间以 10ms 心跳直接 SetCursor(I-beam)，
-    /// 框架的错误写入被压缩到单个心跳周期内（≤10ms，视觉不可见）。仅在指针悬停编辑器时激活，零外溢。
+    /// 采用 ProtectedCursor 显式声明 I-Beam + 交互活动窗口期（280ms 脉冲护航）内按帧同步 SetCursor(I-beam)。
+    /// 在鼠标移动或键盘输入后的异步光标评估窗口期内完全压制闪烁，而在鼠标静止阅读/思考时自动休眠定时器，实现零闲置 CPU 唤醒。
     /// </summary>
     public sealed class JotRichEditBox : RichEditBox
     {
         private const int IDC_IBEAM = 32513;
+        private const long HoldBurstDurationMs = 280;
 
         [DllImport("user32.dll")]
         private static extern IntPtr LoadCursor(IntPtr hInstance, int lpCursorName);
@@ -27,26 +27,78 @@ namespace Journal.Controls
 
         private readonly DispatcherTimer _cursorHoldTimer;
         private bool _cursorHoldRunning;
+        private bool _isPointerOver;
+        private long _holdUntilTick;
 
         public JotRichEditBox()
         {
             ProtectedCursor = InputSystemCursor.Create(InputSystemCursorShape.IBeam);
 
-            _cursorHoldTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) };
-            _cursorHoldTimer.Tick += (_, _) => SetCursor(s_ibeamHandle);
+            _cursorHoldTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+            _cursorHoldTimer.Tick += (_, _) =>
+            {
+                if (!_isPointerOver || !IsLoaded || Visibility != Visibility.Visible || Environment.TickCount64 > _holdUntilTick)
+                {
+                    StopCursorHold();
+                    return;
+                }
+                SetCursor(s_ibeamHandle);
+            };
 
-            PointerEntered += (_, _) => StartCursorHold();
-            PointerMoved += (_, _) => StartCursorHold();
-            PointerExited += (_, _) => StopCursorHold();
-            PointerCanceled += (_, _) => StopCursorHold();
-            Unloaded += (_, _) => StopCursorHold();
+            PointerEntered += (_, _) =>
+            {
+                _isPointerOver = true;
+                PulseCursorHold();
+            };
+            PointerMoved += (_, _) =>
+            {
+                _isPointerOver = true;
+                PulseCursorHold();
+            };
+            PointerPressed += (_, _) =>
+            {
+                if (_isPointerOver) PulseCursorHold();
+            };
+            PointerReleased += (_, _) =>
+            {
+                if (_isPointerOver) PulseCursorHold();
+            };
+            KeyDown += (_, _) =>
+            {
+                if (_isPointerOver) PulseCursorHold();
+            };
+            PointerExited += (_, _) =>
+            {
+                _isPointerOver = false;
+                StopCursorHold();
+            };
+            PointerCanceled += (_, _) =>
+            {
+                _isPointerOver = false;
+                StopCursorHold();
+            };
+            PointerCaptureLost += (_, _) =>
+            {
+                _isPointerOver = false;
+                StopCursorHold();
+            };
+            Unloaded += (_, _) =>
+            {
+                _isPointerOver = false;
+                StopCursorHold();
+            };
         }
 
-        private void StartCursorHold()
+        private void PulseCursorHold()
         {
-            if (_cursorHoldRunning) return;
-            _cursorHoldRunning = true;
-            _cursorHoldTimer.Start();
+            if (!IsLoaded || Visibility != Visibility.Visible) return;
+            SetCursor(s_ibeamHandle);
+            _holdUntilTick = Environment.TickCount64 + HoldBurstDurationMs;
+            if (!_cursorHoldRunning)
+            {
+                _cursorHoldRunning = true;
+                _cursorHoldTimer.Start();
+            }
         }
 
         private void StopCursorHold()

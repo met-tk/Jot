@@ -131,9 +131,9 @@ namespace Journal.ViewModels
             {
                 var rawEntries = await _index.GetAllEntriesAsync();
 
-                // 只呈现字数 > 0 且具有实质文字的真实日记
+                // 只呈现具有实质内容的真实日记
                 var entries = rawEntries
-                    .Where(e => e.WordCount > 0 && !string.IsNullOrWhiteSpace(e.Title) && e.Title != "（今日静默，暂无文字）")
+                    .Where(DiaryIndexService.IsMeaningfulEntry)
                     .ToList();
 
                 // 记录真实写过日记的打卡日期集合，供辅助迷你日历高效渲染
@@ -144,10 +144,10 @@ namespace Journal.ViewModels
 
                 if (!string.IsNullOrEmpty(kw))
                 {
+                    var matchedEntries = await _index.FilterEntriesByQueryAsync(entries, kw);
                     contextualSnippetOverrides = new Dictionary<string, string>(StringComparer.Ordinal);
-                    var filtered = new List<DiaryEntry>();
 
-                    foreach (var e in entries)
+                    foreach (var e in matchedEntries)
                     {
                         bool headerOrIdMatch =
                             (!string.IsNullOrEmpty(e.Title) && e.Title.Contains(kw, StringComparison.OrdinalIgnoreCase)) ||
@@ -155,26 +155,21 @@ namespace Journal.ViewModels
 
                         bool excerptMatch = !string.IsNullOrEmpty(e.Excerpt) && e.Excerpt.Contains(kw, StringComparison.OrdinalIgnoreCase);
 
-                        if (headerOrIdMatch || excerptMatch)
+                        if (!headerOrIdMatch && !excerptMatch)
                         {
-                            filtered.Add(e);
-                            continue;
-                        }
-
-                        // 全文深度检索：当标题与前 120 字摘要未命中时，检索完整日记正文并提取上下文片段
-                        try
-                        {
-                            string fullText = await _storage.LoadDiaryContentAsync(e.Date);
-                            if (!string.IsNullOrEmpty(fullText) && fullText.Contains(kw, StringComparison.OrdinalIgnoreCase))
+                            try
                             {
-                                contextualSnippetOverrides[e.Id] = AnalyticsViewModel.ExtractContextualSnippet(fullText, kw);
-                                filtered.Add(e);
+                                string fullText = await _storage.LoadDiaryContentAsync(e.Date);
+                                if (!string.IsNullOrEmpty(fullText))
+                                {
+                                    contextualSnippetOverrides[e.Id] = AnalyticsViewModel.ExtractContextualSnippet(fullText, kw);
+                                }
                             }
+                            catch { }
                         }
-                        catch { }
                     }
 
-                    entries = filtered;
+                    entries = matchedEntries;
                 }
 
                 TotalEntriesCount = entries.Count;

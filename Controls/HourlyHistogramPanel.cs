@@ -1,3 +1,4 @@
+using System;
 using Microsoft.UI.Xaml.Controls;
 using Windows.Foundation;
 
@@ -10,27 +11,34 @@ namespace Journal.Controls
     {
         protected override Size MeasureOverride(Size availableSize)
         {
-            double availableWidth = double.IsInfinity(availableSize.Width) ? 800 : availableSize.Width;
-            double colWidth = availableWidth / 24.0;
+            double availableWidth = (double.IsInfinity(availableSize.Width) || double.IsNaN(availableSize.Width) || availableSize.Width <= 0)
+                ? 800
+                : availableSize.Width;
+            double colWidth = Math.Max(0, availableWidth / 24.0);
+            double maxAvailHeight = (double.IsInfinity(availableSize.Height) || double.IsNaN(availableSize.Height) || availableSize.Height <= 0)
+                ? 1000
+                : availableSize.Height;
             double maxChildHeight = 0;
 
             foreach (var child in Children)
             {
-                child.Measure(new Size(colWidth, double.IsInfinity(availableSize.Height) ? 1000 : availableSize.Height));
+                child.Measure(new Size(colWidth, maxAvailHeight));
                 if (child.DesiredSize.Height > maxChildHeight)
                 {
                     maxChildHeight = child.DesiredSize.Height;
                 }
             }
 
-            double finalHeight = double.IsInfinity(availableSize.Height) ? (maxChildHeight > 0 ? maxChildHeight : 24) : availableSize.Height;
-            return new Size(availableWidth, finalHeight);
+            double finalHeight = (double.IsInfinity(availableSize.Height) || double.IsNaN(availableSize.Height) || availableSize.Height <= 0)
+                ? (maxChildHeight > 0 ? maxChildHeight : 24)
+                : availableSize.Height;
+            return new Size(availableWidth, Math.Max(0, finalHeight));
         }
 
         protected override Size ArrangeOverride(Size finalSize)
         {
-            double colWidth = finalSize.Width / 24.0;
-            double colHeight = finalSize.Height;
+            double colWidth = Math.Max(0, finalSize.Width / 24.0);
+            double colHeight = Math.Max(0, finalSize.Height);
 
             int index = 0;
             foreach (var child in Children)

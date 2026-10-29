@@ -1,5 +1,4 @@
 using System;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -10,12 +9,14 @@ namespace Journal.ViewModels
 {
     public partial class EditorViewModel : ObservableObject
     {
-        private static readonly Regex s_bracketTagRegex = new(@"\[[^\]]+\]", RegexOptions.Compiled);
+        private const int SyncStatsLengthThreshold = 1500;
+        private const int StatsDebounceMs = 120;
 
         private readonly DiaryStorageService _storage = DiaryStorageService.Instance;
         private readonly DiaryIndexService _index = DiaryIndexService.Instance;
         private readonly object _timerLock = new();
         private Timer? _autoSaveTimer;
+        private Timer? _statsDebounceTimer;
 
         [ObservableProperty]
         private bool _isLoading = false;
@@ -79,6 +80,16 @@ namespace Journal.ViewModels
             }
         }
 
+        /// <summary>
+        /// 将已加载内容与编辑器原生文本缓冲区对齐（消除 \r\n 与 \r 差异导致的伪脏标记，不触发自动保存）
+        /// </summary>
+        public void AlignLoadedContent(string normalizedEditorText)
+        {
+#pragma warning disable MVVMTK0034 // 直接更新后备字段以避免触发属性变更通知与自动保存
+            _diaryContent = normalizedEditorText ?? string.Empty;
+#pragma warning restore MVVMTK0034
+        }
+
         private void UpdateDateHeader()
         {
             DateHeaderTitle = $"{CurrentDate:yyyy年MM月dd日} {CurrentDate:dddd}";
@@ -91,8 +102,16 @@ namespace Journal.ViewModels
             if (IsLoading) return;
 
             HasUnsavedChanges = true;
-            WordCount = _storage.CalculateWordCount(value);
-            TimestampsCount = _storage.CountTimestamps(value);
+
+            if (string.IsNullOrEmpty(value) || value.Length <= SyncStatsLengthThreshold)
+            {
+                WordCount = _storage.CalculateWordCount(value);
+                TimestampsCount = _storage.CountTimestamps(value);
+            }
+            else
+            {
+                ScheduleDebouncedStatsCalculation(value);
+            }
 
             if (!IsAutoSaveEnabled)
             {
@@ -113,6 +132,52 @@ namespace Journal.ViewModels
                 {
                     _autoSaveTimer.Change(1200, Timeout.Infinite);
                 }
+            }
+        }
+
+        private int _statsCalculationVersion;
+        private string _pendingStatsSnapshot = string.Empty;
+
+        private void ScheduleDebouncedStatsCalculation(string snapshot)
+        {
+            Interlocked.Increment(ref _statsCalculationVersion);
+            Volatile.Write(ref _pendingStatsSnapshot, snapshot);
+
+            lock (_timerLock)
+            {
+                if (_statsDebounceTimer == null)
+                {
+                    _statsDebounceTimer = new Timer(OnStatsDebounceCallback, null, StatsDebounceMs, Timeout.Infinite);
+                }
+                else
+                {
+                    _statsDebounceTimer.Change(StatsDebounceMs, Timeout.Infinite);
+                }
+            }
+        }
+
+        private void OnStatsDebounceCallback(object? state)
+        {
+            int version = Volatile.Read(ref _statsCalculationVersion);
+            string text = Volatile.Read(ref _pendingStatsSnapshot) ?? DiaryContent ?? string.Empty;
+            int words = _storage.CalculateWordCount(text);
+            int tsCount = _storage.CountTimestamps(text);
+
+            if (version != Volatile.Read(ref _statsCalculationVersion)) return;
+
+            if (_dispatcher != null && !_dispatcher.HasThreadAccess)
+            {
+                _dispatcher.TryEnqueue(() =>
+                {
+                    if (version != Volatile.Read(ref _statsCalculationVersion)) return;
+                    WordCount = words;
+                    TimestampsCount = tsCount;
+                });
+            }
+            else
+            {
+                WordCount = words;
+                TimestampsCount = tsCount;
             }
         }
 
@@ -159,6 +224,8 @@ namespace Journal.ViewModels
             {
                 _autoSaveTimer?.Dispose();
                 _autoSaveTimer = null;
+                _statsDebounceTimer?.Dispose();
+                _statsDebounceTimer = null;
             }
         }
 
@@ -174,32 +241,54 @@ namespace Journal.ViewModels
         private readonly SemaphoreSlim _saveLock = new(1, 1);
 
         [RelayCommand]
-        public async Task SaveCurrentAsync()
+        public Task SaveCurrentAsync()
         {
             StopAutoSaveTimer();
-            if (IsLoading) return;
+            if (IsLoading) return Task.CompletedTask;
 
+            Task saveTask = SaveCurrentCoreAsync();
+            _index.RegisterPendingSave(saveTask);
+            return saveTask;
+        }
+
+        private async Task SaveCurrentCoreAsync()
+        {
             await _saveLock.WaitAsync();
             try
             {
+                if (IsLoading) return;
+
+                DateTime targetDate = CurrentDate;
                 string raw = DiaryContent ?? string.Empty;
-                string cleaned = (raw.Contains('[') ? s_bracketTagRegex.Replace(raw, " ") : raw).Trim();
-                bool hasSubstantiveContent = WordCount > 0 || !string.IsNullOrWhiteSpace(cleaned);
+                int currentWords = _storage.CalculateWordCount(raw);
+                int currentTs = _storage.CountTimestamps(raw);
+                WordCount = currentWords;
+                TimestampsCount = currentTs;
+
+                string cleaned = CjkTextHelper.StripBracketTags(raw).Trim();
+                bool hasSubstantiveContent = currentWords > 0 || !string.IsNullOrWhiteSpace(cleaned);
 
                 if (!hasSubstantiveContent)
                 {
                     // 编辑器永不自动物理删除磁盘已有文件
-                    SaveStatusText = _storage.DiaryExists(CurrentDate) ? "已保留原内容" : "未记录";
-                    HasUnsavedChanges = false;
+                    if (CurrentDate == targetDate && string.Equals(DiaryContent, raw, StringComparison.Ordinal))
+                    {
+                        SaveStatusText = _storage.DiaryExists(targetDate) ? "已保留原内容" : "未记录";
+                        HasUnsavedChanges = false;
+                    }
                     return;
                 }
 
-                await _storage.SaveDiaryContentAsync(CurrentDate, raw);
-                string path = _storage.GetDiaryPath(CurrentDate);
-                await _index.SyncDiaryAsync(CurrentDate, raw, path);
+                await _storage.SaveDiaryContentAsync(targetDate, raw);
+                string path = _storage.GetDiaryPath(targetDate, ensureDirectory: false);
+                await _index.SyncDiaryAsync(targetDate, raw, path);
 
-                HasUnsavedChanges = false;
-                SaveStatusText = $"已保存 ({DateTime.Now:HH:mm})";
+                // 仅当异步落盘期间用户未切换日期且未继续输入新内容时，才清除未保存标志
+                if (CurrentDate == targetDate && string.Equals(DiaryContent, raw, StringComparison.Ordinal))
+                {
+                    HasUnsavedChanges = false;
+                    SaveStatusText = $"已保存 ({DateTime.Now:HH:mm})";
+                }
             }
             catch (Exception ex)
             {
@@ -213,24 +302,30 @@ namespace Journal.ViewModels
         }
 
         /// <summary>
-        /// 智能插入时间戳：当天首个附带年月日，后续仅保留时分秒
+        /// 智能插入时间戳：当前编辑日期的首个时间戳附带该日记年月日，后续仅保留时分秒
         /// </summary>
         [RelayCommand]
         public void InsertTimestamp()
         {
-            bool hasTimestamps = _storage.HasExistingTimestamp(DiaryContent);
-            string ts = _storage.GenerateTimestamp(!hasTimestamps);
+            InsertTimestampAtContext(null);
+        }
 
+        public void InsertTimestampAtContext(string? textBeforeCursor)
+        {
+            bool hasTimestamps = _storage.HasExistingTimestamp(DiaryContent);
+            string ts = _storage.GenerateTimestamp(!hasTimestamps, CurrentDate);
+
+            string prefixContext = textBeforeCursor ?? DiaryContent;
             string toInsert;
-            if (string.IsNullOrWhiteSpace(DiaryContent))
+            if (string.IsNullOrWhiteSpace(prefixContext))
             {
                 toInsert = $"{ts}\n";
             }
-            else if (DiaryContent.EndsWith("\n\n") || DiaryContent.EndsWith("\r\n\r\n") || DiaryContent.EndsWith("\r\r"))
+            else if (prefixContext.EndsWith("\n\n") || prefixContext.EndsWith("\r\n\r\n") || prefixContext.EndsWith("\r\r"))
             {
                 toInsert = $"{ts}\n";
             }
-            else if (DiaryContent.EndsWith('\n') || DiaryContent.EndsWith('\r') || DiaryContent.EndsWith("\r\n"))
+            else if (prefixContext.EndsWith('\n') || prefixContext.EndsWith('\r') || prefixContext.EndsWith("\r\n"))
             {
                 toInsert = $"\n{ts}\n";
             }

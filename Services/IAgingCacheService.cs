@@ -18,7 +18,7 @@ namespace Journal.Services
         /// 获取或生成缓存文件路径。若已有有效缓存则秒级直返，若无则执行异步生成并原子落盘。
         /// </summary>
         /// <param name="sourcePath">源贴图文件物理路径</param>
-        /// <param name="mode">处理模式（"gray" 或 "inv"）</param>
+        /// <param name="mode">处理模式（"gray"、"inv" 或 "wearmask-v4"）</param>
         /// <param name="processAction">生成委托 (sourcePath, tempOutputPath) => Task</param>
         /// <returns>已就绪的缓存文件完整路径</returns>
         Task<string> GetOrCreateCachedFileAsync(string sourcePath, string mode, Func<string, string, Task> processAction);
@@ -32,11 +32,6 @@ namespace Journal.Services
         /// 获取指定缓存键与模式对应的目标文件路径 (<sha256>_<mode>.png)
         /// </summary>
         string GetCachedFilePath(string cacheKey, string mode);
-
-        /// <summary>
-        /// 检查指定源文件及模式是否已存在有效缓存
-        /// </summary>
-        bool HasValidCache(string sourcePath, string mode);
 
         /// <summary>
         /// 统计当前缓存目录所占用的总物理磁盘字节数

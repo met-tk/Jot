@@ -421,7 +421,7 @@
                                         </Border>
                                     </StackPanel>
 
-                                    <!-- 行 1 右侧：编辑按钮 + 删除按钮 + 返回月视图按钮 -->
+                                    <!-- 行 1 右侧：编辑按钮 + 删除按钮 + 返回上级视图按钮 -->
                                     <StackPanel Grid.Row="1" Grid.Column="1"
                                                 Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                                         <Button Style="{ThemeResource AccentButtonStyle}" Padding="14,7" CornerRadius="6"
@@ -443,10 +443,10 @@
                                         </Button>
 
                                         <Button Style="{ThemeResource DefaultButtonStyle}" Padding="12,7" CornerRadius="6"
-                                                Command="{x:Bind ViewModel.SwitchToMonthViewCommand}">
+                                                Command="{x:Bind ViewModel.BackToUpperLevelCommand}">
                                             <StackPanel Orientation="Horizontal" Spacing="6">
-                                                <FontIcon Glyph="&#xE787;" FontSize="12"/>
-                                                <TextBlock Text="返回月视图" FontSize="12"/>
+                                                <FontIcon Glyph="&#xE72B;" FontSize="12"/>
+                                                <TextBlock Text="{x:Bind ViewModel.DayCardBackButtonText, Mode=OneWay}" FontSize="12"/>
                                             </StackPanel>
                                         </Button>
                                     </StackPanel>

@@ -10,10 +10,24 @@ using SQLite;
 
 namespace Journal.Services
 {
-    public class DiaryIndexService
+    public class DiaryIndexService : IDiaryIndexService
     {
         private static DiaryIndexService? _instance;
         public static DiaryIndexService Instance => _instance ??= new DiaryIndexService();
+
+        public const string EmptyRecordPlaceholderTitle = "（空白记录）";
+        public const string LegacySilentPlaceholderTitle = "（今日静默，暂无文字）";
+
+        /// <summary>
+        /// 统一判定索引条目是否包含有效日记内容（字数 > 0 或包含时间戳节点，排除空白占位符）
+        /// </summary>
+        public static bool IsMeaningfulEntry(DiaryEntry? entry)
+        {
+            if (entry == null) return false;
+            if (entry.WordCount <= 0 && entry.TimestampsCount <= 0) return false;
+            return !string.Equals(entry.Title, EmptyRecordPlaceholderTitle, StringComparison.Ordinal) &&
+                   !string.Equals(entry.Title, LegacySilentPlaceholderTitle, StringComparison.Ordinal);
+        }
 
         private SQLiteAsyncConnection? _db;
         private readonly string _dbPath;
@@ -21,6 +35,7 @@ namespace Journal.Services
         private readonly SemaphoreSlim _initLock = new(1, 1);
         private readonly SemaphoreSlim _scanLock = new(1, 1);
         private Microsoft.UI.Dispatching.DispatcherQueue? _dispatcherQueue;
+        private volatile Task _pendingSaveTask = Task.CompletedTask;
 
         public event Action? DataChanged;
 
@@ -38,6 +53,31 @@ namespace Journal.Services
             else
             {
                 DataChanged?.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// 登记正在进行的编辑器自动/切页保存任务，供目标页面查询前等待同步完成，彻底消除切页竞态闪烁
+        /// </summary>
+        public void RegisterPendingSave(Task saveTask)
+        {
+            if (saveTask == null || saveTask.IsCompleted) return;
+            _pendingSaveTask = saveTask;
+        }
+
+        /// <summary>
+        /// 等待挂起的编辑器保存与索引同步完成
+        /// </summary>
+        public async Task WaitForPendingSaveAsync()
+        {
+            var pending = _pendingSaveTask;
+            if (pending != null && !pending.IsCompleted)
+            {
+                try
+                {
+                    await pending.ConfigureAwait(false);
+                }
+                catch { }
             }
         }
 
@@ -146,11 +186,10 @@ namespace Journal.Services
             if (db == null) return;
 
             DateTime lastWrite = File.Exists(fullPath) ? File.GetLastWriteTime(fullPath) : DateTime.Now;
-            var entry = BuildDiaryEntry(date, content, fullPath, lastWrite, "（空白记录）", out int wordCount, out var summary);
+            var entry = BuildDiaryEntry(date, content, fullPath, lastWrite, EmptyRecordPlaceholderTitle, out int wordCount, out var summary);
 
-            if (wordCount == 0 && string.IsNullOrWhiteSpace(summary.Headline) && string.IsNullOrWhiteSpace(content))
+            if (wordCount == 0 && entry.TimestampsCount == 0 && string.IsNullOrWhiteSpace(summary.Headline) && string.IsNullOrWhiteSpace(content))
             {
-                // 仅当彻底没有任何字符且磁盘文件已不存在时，清理索引库条目
                 if (!File.Exists(fullPath))
                 {
                     await db.DeleteAsync<DiaryEntry>(entry.Id);
@@ -187,7 +226,7 @@ namespace Journal.Services
                     out int wordCount,
                     out var summary);
 
-                if (wordCount == 0 && string.IsNullOrWhiteSpace(summary.Headline) && string.IsNullOrWhiteSpace(item.Content) && !File.Exists(item.FullPath))
+                if (wordCount == 0 && entry.TimestampsCount == 0 && string.IsNullOrWhiteSpace(summary.Headline) && string.IsNullOrWhiteSpace(item.Content) && !File.Exists(item.FullPath))
                 {
                     idsToDelete.Add(entry.Id);
                 }
@@ -259,9 +298,16 @@ namespace Journal.Services
                         if (DateTime.TryParseExact(fileName, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
                         {
                             string id = parsedDate.ToString("yyyy-MM-dd");
-                            seenIds.Add(id);
 
                             var fileInfo = new FileInfo(file);
+                            // 跳过 0 字节空文件，防止被赋予假标题后污染热力图与列表
+                            if (fileInfo.Length == 0)
+                            {
+                                continue;
+                            }
+
+                            seenIds.Add(id);
+
                             // 增量快检：若索引库已存在该条目且路径、最后修改时间戳完全一致，免除重复磁盘 I/O 与正则解析
                             if (existingById.TryGetValue(id, out var existingEntry) &&
                                 string.Equals(existingEntry.FullPath, file, StringComparison.OrdinalIgnoreCase) &&
@@ -272,6 +318,11 @@ namespace Journal.Services
                             }
 
                             string content = await DiaryStorageService.ReadFileTextSharedAsync(file);
+                            if (string.IsNullOrWhiteSpace(content))
+                            {
+                                seenIds.Remove(id);
+                                continue;
+                            }
 
                             var entry = BuildDiaryEntry(
                                 parsedDate,
@@ -307,9 +358,9 @@ namespace Journal.Services
                     });
                 }
 
-                // 自动清理物理文件不存在的孤儿脏记录 (Orphaned SQLite Records)
+                // 自动清理物理文件不存在或为空的孤儿脏记录 (Orphaned SQLite Records)
                 var orphans = allInDb
-                    .Where(e => !seenIds.Contains(e.Id) && !File.Exists(e.FullPath) && !File.Exists(storage.GetDiaryPath(e.Date)))
+                    .Where(e => !seenIds.Contains(e.Id) && (!File.Exists(e.FullPath) || new FileInfo(e.FullPath).Length == 0))
                     .ToList();
 
                 if (orphans.Count > 0)
@@ -336,6 +387,7 @@ namespace Journal.Services
 
         public async Task<DiaryEntry?> GetEntryAsync(DateTime date)
         {
+            await WaitForPendingSaveAsync();
             await InitializeAsync();
             var db = _db;
             if (db == null) return null;
@@ -375,6 +427,7 @@ namespace Journal.Services
 
         public async Task<List<DiaryEntry>> GetAllEntriesAsync()
         {
+            await WaitForPendingSaveAsync();
             await InitializeAsync();
             var db = _db;
             if (db == null) return new List<DiaryEntry>();
@@ -385,10 +438,71 @@ namespace Journal.Services
         }
 
         /// <summary>
+        /// 基于内存内容缓存与并发读取的高性能全文检索过滤（优先命中标题与摘要，未命中项并发走内存内容缓存匹配）
+        /// </summary>
+        public async Task<List<DiaryEntry>> FilterEntriesByQueryAsync(
+            IReadOnlyList<DiaryEntry> entries,
+            string query,
+            CancellationToken cancellationToken = default)
+        {
+            if (entries.Count == 0 || string.IsNullOrWhiteSpace(query))
+            {
+                return entries.ToList();
+            }
+
+            string q = query.Trim();
+            var storage = DiaryStorageService.Instance;
+            var matchedFlags = new bool[entries.Count];
+            var uncachedTasks = new List<Task>();
+
+            for (int i = 0; i < entries.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var e = entries[i];
+                if ((e.Title != null && e.Title.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
+                    (e.Excerpt != null && e.Excerpt.Contains(q, StringComparison.OrdinalIgnoreCase)))
+                {
+                    matchedFlags[i] = true;
+                }
+                else
+                {
+                    int index = i;
+                    DateTime targetDate = e.Date;
+                    uncachedTasks.Add(Task.Run(async () =>
+                    {
+                        if (cancellationToken.IsCancellationRequested) return;
+                        string content = await storage.LoadDiaryContentAsync(targetDate).ConfigureAwait(false);
+                        if (!string.IsNullOrEmpty(content) && content.Contains(q, StringComparison.OrdinalIgnoreCase))
+                        {
+                            matchedFlags[index] = true;
+                        }
+                    }, cancellationToken));
+                }
+            }
+
+            if (uncachedTasks.Count > 0)
+            {
+                await Task.WhenAll(uncachedTasks).ConfigureAwait(false);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var matched = new List<DiaryEntry>();
+            for (int i = 0; i < entries.Count; i++)
+            {
+                if (matchedFlags[i])
+                {
+                    matched.Add(entries[i]);
+                }
+            }
+            return matched;
+        }
+
+        /// <summary>
         /// 综合统计指标计算：连续天数、总字数、平均字数、月度分布（支持复用已加载条目避免重复查询 SQLite）
         /// </summary>
         public async Task<AnalyticsStats> CalculateAnalyticsAsync(IReadOnlyList<DiaryEntry>? preloadedEntries = null)
         {
+            await WaitForPendingSaveAsync();
             await InitializeAsync();
             var all = preloadedEntries ?? await GetAllEntriesAsync();
             var stats = new AnalyticsStats();
@@ -401,11 +515,10 @@ namespace Journal.Services
 
             foreach (var entry in all)
             {
+                if (!IsMeaningfulEntry(entry)) continue;
+
                 totalWords += entry.WordCount;
-                if (entry.WordCount > 0 || entry.TimestampsCount > 0)
-                {
-                    activeDaySet.Add(entry.Date.Date);
-                }
+                activeDaySet.Add(entry.Date.Date);
 
                 var ym = (entry.Date.Year, entry.Date.Month);
                 monthlyWordSums[ym] = monthlyWordSums.GetValueOrDefault(ym) + entry.WordCount;

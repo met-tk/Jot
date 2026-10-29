@@ -9,6 +9,28 @@
     xmlns:local="using:Journal.Views"
     mc:Ignorable="d">
 
+    <Page.Resources>
+        <!-- 页面级共享右键快捷菜单（彻底消除每个卡片重复实例化菜单树并杜绝虚拟化卸载崩溃） -->
+        <MenuFlyout x:Name="SharedCardContextFlyout">
+            <MenuFlyoutItem Text="编辑日记" Click="MenuEdit_Click">
+                <MenuFlyoutItem.Icon>
+                    <FontIcon Glyph="&#xE70F;"/>
+                </MenuFlyoutItem.Icon>
+            </MenuFlyoutItem>
+            <MenuFlyoutItem Text="复制内容" Click="MenuCopy_Click">
+                <MenuFlyoutItem.Icon>
+                    <FontIcon Glyph="&#xE8C8;"/>
+                </MenuFlyoutItem.Icon>
+            </MenuFlyoutItem>
+            <MenuFlyoutSeparator/>
+            <MenuFlyoutItem Text="删除日记" Click="MenuDelete_Click" Foreground="#E11D48">
+                <MenuFlyoutItem.Icon>
+                    <FontIcon Glyph="&#xE74D;" Foreground="#E11D48"/>
+                </MenuFlyoutItem.Icon>
+            </MenuFlyoutItem>
+        </MenuFlyout>
+    </Page.Resources>
+
     <Page.KeyboardAccelerators>
         <KeyboardAccelerator Key="E" Modifiers="Control" Invoked="ReadingEdit_AcceleratorInvoked"/>
     </Page.KeyboardAccelerators>
@@ -183,11 +205,14 @@
                         <TextBlock Text="暂无书写记录，开始写下第一篇日记吧" FontSize="14" Opacity="0.6" HorizontalAlignment="Center"/>
                     </StackPanel>
 
-                    <!-- 分组卡片列表 -->
-                    <ItemsControl ItemsSource="{x:Bind ViewModel.Groups, Mode=OneWay}">
-                        <ItemsControl.ItemTemplate>
+                    <!-- 分组卡片列表（双层 ItemsRepeater + StackLayout 实现视口级 UI 虚拟化回收） -->
+                    <ItemsRepeater x:Name="GroupsRepeater" ItemsSource="{x:Bind ViewModel.Groups, Mode=OneWay}">
+                        <ItemsRepeater.Layout>
+                            <StackLayout Spacing="20"/>
+                        </ItemsRepeater.Layout>
+                        <ItemsRepeater.ItemTemplate>
                             <DataTemplate x:DataType="models:DiaryGroupItem">
-                                <StackPanel Spacing="10" Margin="0,0,0,20">
+                                <StackPanel Spacing="10">
                                     <!-- 分组吸顶标头 -->
                                     <StackPanel Orientation="Horizontal" Spacing="8" Margin="4,0,0,4">
                                         <FontIcon Glyph="&#xED28;" FontSize="13" Opacity="0.5"/>
@@ -195,11 +220,16 @@
                                     </StackPanel>
 
                                     <!-- 当月卡片列表 -->
-                                    <ItemsControl ItemsSource="{x:Bind Entries}">
-                                        <ItemsControl.ItemTemplate>
+                                    <ItemsRepeater ItemsSource="{x:Bind Entries}"
+                                                   ElementPrepared="DiaryCardRepeater_ElementPrepared"
+                                                   ElementClearing="DiaryCardRepeater_ElementClearing">
+                                        <ItemsRepeater.Layout>
+                                            <StackLayout Spacing="8"/>
+                                        </ItemsRepeater.Layout>
+                                        <ItemsRepeater.ItemTemplate>
                                             <DataTemplate x:DataType="models:DiaryCardItem">
-                                                <Grid Margin="0,0,0,8">
-                                                    <!-- 主卡片容器：直接使用原生主题画刷，深浅主题 100% 自动自洽且零崩溃 -->
+                                                <Grid>
+                                                    <!-- 主卡片容器：复用页面级共享右键菜单，深浅主题 100% 自动自洽 -->
                                                     <Border Padding="14,12" CornerRadius="8"
                                                             Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
@@ -209,27 +239,6 @@
                                                             Unloaded="DiaryCard_Unloaded"
                                                             PointerPressed="DiaryCard_PointerPressed"
                                                             ContextRequested="DiaryCard_ContextRequested">
-                                                        <!-- 右键快捷菜单 (MenuFlyout，不绑定内嵌 x:Bind 以根除虚拟化卸载崩溃) -->
-                                                        <Border.ContextFlyout>
-                                                            <MenuFlyout>
-                                                                <MenuFlyoutItem Text="编辑日记" Click="MenuEdit_Click">
-                                                                    <MenuFlyoutItem.Icon>
-                                                                        <FontIcon Glyph="&#xE70F;"/>
-                                                                    </MenuFlyoutItem.Icon>
-                                                                </MenuFlyoutItem>
-                                                                <MenuFlyoutItem Text="复制内容" Click="MenuCopy_Click">
-                                                                    <MenuFlyoutItem.Icon>
-                                                                        <FontIcon Glyph="&#xE8C8;"/>
-                                                                    </MenuFlyoutItem.Icon>
-                                                                </MenuFlyoutItem>
-                                                                <MenuFlyoutSeparator/>
-                                                                <MenuFlyoutItem Text="删除日记" Click="MenuDelete_Click" Foreground="#E11D48">
-                                                                    <MenuFlyoutItem.Icon>
-                                                                        <FontIcon Glyph="&#xE74D;" Foreground="#E11D48"/>
-                                                                    </MenuFlyoutItem.Icon>
-                                                                </MenuFlyoutItem>
-                                                            </MenuFlyout>
-                                                        </Border.ContextFlyout>
 
                                                         <Grid ColumnSpacing="14">
                                                             <Grid.ColumnDefinitions>
@@ -319,12 +328,12 @@
                                                             Visibility="{x:Bind local:DiaryListPage.GetVisibility(IsHighlighted), Mode=OneWay}"/>
                                                 </Grid>
                                             </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
+                                        </ItemsRepeater.ItemTemplate>
+                                    </ItemsRepeater>
                                 </StackPanel>
                             </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
                 </Grid>
             </ScrollViewer>
 

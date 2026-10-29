@@ -42,6 +42,9 @@ namespace Journal.ViewModels
         private string _upperLevelButtonText = string.Empty;
 
         [ObservableProperty]
+        private string _dayCardBackButtonText = "返回月视图";
+
+        [ObservableProperty]
         private bool _isUpperLevelButtonVisible = false;
 
         [ObservableProperty]
@@ -179,6 +182,7 @@ namespace Journal.ViewModels
                     HeaderTitle = $"{SelectedDate:yyyy年MM月dd日}";
                     IsUpperLevelButtonVisible = true;
                     UpperLevelButtonText = _dayViewSourceMode == CalendarViewMode.YearOverview ? "年视图" : "月视图";
+                    DayCardBackButtonText = _dayViewSourceMode == CalendarViewMode.YearOverview ? "返回年视图" : "返回月视图";
                     PrevPeriodTooltip = "前一天";
                     NextPeriodTooltip = "后一天";
                     ViewToggleText = "年视图";
@@ -186,8 +190,6 @@ namespace Journal.ViewModels
                     break;
             }
         }
-
-        public Task LoadCalendarAsync() => RefreshDataAsync();
 
         public HashSet<DateTime> ActiveDates { get; } = new();
 
@@ -198,18 +200,18 @@ namespace Journal.ViewModels
             {
                 var allEntries = await _index.GetAllEntriesAsync();
                 ActiveDates.Clear();
-                foreach (var e in allEntries.Where(x => x.WordCount > 0 || x.TimestampsCount > 0 || !string.IsNullOrWhiteSpace(x.Title)))
+                foreach (var e in allEntries.Where(DiaryIndexService.IsMeaningfulEntry))
                 {
                     ActiveDates.Add(e.Date.Date);
                 }
 
-                var yearEntries = allEntries.Where(e => e.Date.Year == CurrentYear).ToList();
+                var yearEntries = allEntries.Where(e => e.Date.Year == CurrentYear && DiaryIndexService.IsMeaningfulEntry(e)).ToList();
                 var entryMap = yearEntries
                     .GroupBy(e => e.Date.Date)
                     .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.LastModified).First());
 
                 TotalYearWords = yearEntries.Sum(e => e.WordCount);
-                TotalActiveDays = yearEntries.Count(e => e.WordCount > 0 || e.TimestampsCount > 0 || !string.IsNullOrWhiteSpace(e.Title));
+                TotalActiveDays = yearEntries.Count;
 
                 var analytics = await _index.CalculateAnalyticsAsync(allEntries);
                 CurrentStreak = analytics.CurrentStreak;
@@ -248,15 +250,15 @@ namespace Journal.ViewModels
             string content = await _storage.LoadDiaryContentAsync(date);
             var summary = _storage.ExtractSummary(content);
 
-            if (entry != null && (!string.IsNullOrWhiteSpace(content) || entry.WordCount > 0))
+            if (!string.IsNullOrWhiteSpace(content) || DiaryIndexService.IsMeaningfulEntry(entry))
             {
                 SelectedDayHasDiary = true;
-                SelectedDayDiaryTitle = string.IsNullOrWhiteSpace(entry.CustomTitle)
-                    ? (string.IsNullOrWhiteSpace(summary.Headline) ? $"{date:yyyy-MM-dd} 日记" : summary.Headline)
-                    : entry.CustomTitle;
+                SelectedDayDiaryTitle = !string.IsNullOrWhiteSpace(entry?.CustomTitle)
+                    ? entry.CustomTitle
+                    : (string.IsNullOrWhiteSpace(summary.Headline) ? $"{date:yyyy-MM-dd} 日记" : summary.Headline);
                 SelectedDayDiaryContent = content.Trim();
-                SelectedDayWordCount = entry.WordCount;
-                SelectedDayTimestampsCount = entry.TimestampsCount;
+                SelectedDayWordCount = entry?.WordCount > 0 ? entry.WordCount : _storage.CalculateWordCount(content);
+                SelectedDayTimestampsCount = entry?.TimestampsCount > 0 ? entry.TimestampsCount : _storage.CountTimestamps(content);
             }
             else
             {
@@ -303,15 +305,15 @@ namespace Journal.ViewModels
                 entryMap.TryGetValue(curDate.Date, out var entry);
 
                 string calExcerpt = string.Empty;
-                if (entry != null)
+                if (DiaryIndexService.IsMeaningfulEntry(entry))
                 {
-                    if (!string.IsNullOrWhiteSpace(entry.CustomTitle))
+                    if (!string.IsNullOrWhiteSpace(entry!.CustomTitle))
                     {
                         calExcerpt = string.IsNullOrWhiteSpace(entry.Excerpt)
                             ? entry.CustomTitle
                             : $"{entry.CustomTitle} · {entry.Excerpt}";
                     }
-                    else if (!string.IsNullOrWhiteSpace(entry.Title) && entry.Title != "（今日静默，暂无文字）")
+                    else if (!string.IsNullOrWhiteSpace(entry.Title))
                     {
                         calExcerpt = string.IsNullOrWhiteSpace(entry.Excerpt)
                             ? entry.Title
@@ -376,11 +378,19 @@ namespace Journal.ViewModels
             {
                 _dayViewSourceMode = ViewMode;
             }
+            bool periodChanged = (CurrentYear != date.Year || CurrentMonth != date.Month);
             CurrentYear = date.Year;
             CurrentMonth = date.Month;
             SelectedDate = date;
             ViewMode = CalendarViewMode.DayDetail;
-            await LoadDayJournalContentAsync(date);
+            if (periodChanged)
+            {
+                await RefreshDataAsync();
+            }
+            else
+            {
+                await LoadDayJournalContentAsync(date);
+            }
         }
 
         [RelayCommand]
@@ -488,6 +498,7 @@ namespace Journal.ViewModels
             {
                 if (CurrentYear == today.Year && CurrentMonth == today.Month)
                 {
+                    _dayViewSourceMode = CalendarViewMode.MonthDetail;
                     ViewMode = CalendarViewMode.DayDetail;
                     await LoadDayJournalContentAsync(today);
                     return;
@@ -500,9 +511,17 @@ namespace Journal.ViewModels
             }
             else if (ViewMode == CalendarViewMode.DayDetail)
             {
+                bool periodChanged = (CurrentYear != today.Year || CurrentMonth != today.Month);
                 CurrentYear = today.Year;
                 CurrentMonth = today.Month;
-                await LoadDayJournalContentAsync(today);
+                if (periodChanged)
+                {
+                    await RefreshDataAsync();
+                }
+                else
+                {
+                    await LoadDayJournalContentAsync(today);
+                }
                 return;
             }
             await RefreshDataAsync();

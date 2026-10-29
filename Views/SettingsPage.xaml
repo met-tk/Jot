@@ -533,6 +533,28 @@
                                     Click="ImportDiaries_Click"/>
                         </Grid>
 
+                        <!-- 日记回收站管理 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="日记回收站" FontSize="13" FontWeight="Medium"/>
+                                <TextBlock Text="{x:Bind ViewModel.TrashSummaryText, Mode=OneWay}"
+                                           FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Button Content="恢复最近删除" Style="{ThemeResource SubtleButtonStyle}" Padding="12,6"
+                                        IsEnabled="{x:Bind ViewModel.HasTrashItems, Mode=OneWay}"
+                                        Command="{x:Bind ViewModel.RestoreLatestTrashCommand}"/>
+                                <Button Content="清空回收站" Style="{ThemeResource SubtleButtonStyle}" Padding="12,6"
+                                        IsEnabled="{x:Bind ViewModel.HasTrashItems, Mode=OneWay}"
+                                        Command="{x:Bind ViewModel.EmptyTrashCommand}"/>
+                            </StackPanel>
+                        </Grid>
+
                         <MenuFlyoutSeparator Margin="0,-4,0,-4"/>
 
                         <!-- 快捷键速查 -->
@@ -545,14 +567,16 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="• Ctrl+1 ~ 6：切换今日/日历/目录/统计/导入/设置" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock Grid.Row="0" Grid.Column="1" Text="• Ctrl+T：追加当前时间戳" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock Grid.Row="1" Grid.Column="0" Text="• Ctrl+S：立即保存日记" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <TextBlock Grid.Row="1" Grid.Column="1" Text="• 鼠标侧键：前进 / 后退视图与页面" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="• Ctrl+F：页内查找与高亮定位" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock Grid.Row="2" Grid.Column="0" Text="• Ctrl+Z：撤回上一步输入" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock Grid.Row="2" Grid.Column="1" Text="• Ctrl+Shift+Z：撤销撤回（重做）" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Text="• 鼠标侧键：前进 / 后退视图与页面" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         </Grid>
 
                         <MenuFlyoutSeparator Margin="0,-2,0,-2"/>

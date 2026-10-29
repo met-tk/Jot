@@ -16,7 +16,7 @@
     <WindowsAppSDKSelfContained Condition="'$(WindowsAppSDKSelfContained)' == ''">false</WindowsAppSDKSelfContained>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.5.0</Version>
+    <Version>1.6.0</Version>
     <ApplicationIcon>Assets\jot.ico</ApplicationIcon>
     <SatelliteResourceLanguages>zh-CN;zh-Hans;en-US</SatelliteResourceLanguages>
     <DefaultItemExcludes>$(DefaultItemExcludes);Release\**;Installer\**</DefaultItemExcludes>
@@ -59,11 +59,14 @@
       <_RootXbfFiles Include="$(TargetDir)*.xbf" />
       <_ViewXbfFiles Include="$(TargetDir)Views\**\*.xbf" />
       <_PriFiles Include="$(TargetDir)*.pri" />
+      <_UnusedLocaleDirs Include="$([System.IO.Directory]::GetDirectories('$(PublishDir)'))"
+                         Condition="$([System.Text.RegularExpressions.Regex]::IsMatch($([System.IO.Path]::GetFileName('%(Identity)')), '^[a-z]{2}(-[A-Za-z0-9]+)+$')) and '$([System.IO.Path]::GetFileName(&quot;%(Identity)&quot;))' != 'zh-CN' and '$([System.IO.Path]::GetFileName(&quot;%(Identity)&quot;))' != 'zh-Hans' and '$([System.IO.Path]::GetFileName(&quot;%(Identity)&quot;))' != 'en-US'" />
     </ItemGroup>
     <Copy SourceFiles="@(_RootXbfFiles)" DestinationFolder="$(PublishDir)" />
     <Copy SourceFiles="@(_ViewXbfFiles)" DestinationFolder="$(PublishDir)Views\%(RecursiveDir)" />
     <Copy SourceFiles="@(_PriFiles)" DestinationFolder="$(PublishDir)" />
     <Copy SourceFiles="$(TargetDir)$(AssemblyName).pri" DestinationFiles="$(PublishDir)resources.pri" Condition="Exists('$(TargetDir)$(AssemblyName).pri')" />
+    <RemoveDir Directories="@(_UnusedLocaleDirs)" />
   </Target>
 </Project>
 

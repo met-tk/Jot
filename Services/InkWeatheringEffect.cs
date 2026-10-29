@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Brushes;
@@ -40,19 +41,26 @@ internal static class InkWeatheringEffect
         return new AlphaMaskEffect { Source = editor, AlphaMask = retainedInk };
     }
 
+    public static double GetVerticalPeriod(CanvasBitmap texture)
+    {
+        float scale = Math.Min(1f, 256f / (float)texture.Size.Width);
+        return Math.Max(1.0, texture.Size.Height * scale * 2.0);
+    }
+
     public static CanvasImageBrush CreateTileBrush(CanvasDevice device, CanvasBitmap texture, double offset)
     {
         // A whole-page texture at native resolution produces broad washes. Bring
         // it down to stroke-sized detail, independent of viewport size and DPI.
         float scale = Math.Min(1f, 256f / (float)texture.Size.Width);
-        double period = texture.Size.Height * scale * 2;
+        double period = Math.Max(1.0, texture.Size.Height * scale * 2.0);
+        double wrapped = ((offset % period) + period) % period;
         return new CanvasImageBrush(device, texture)
         {
             ExtendX = CanvasEdgeBehavior.Mirror,
             ExtendY = CanvasEdgeBehavior.Mirror,
             Interpolation = CanvasImageInterpolation.Linear,
             Transform = Matrix3x2.CreateScale(scale) *
-                Matrix3x2.CreateTranslation(0, -(float)(offset % period))
+                Matrix3x2.CreateTranslation(0, -(float)wrapped)
         };
     }
 }

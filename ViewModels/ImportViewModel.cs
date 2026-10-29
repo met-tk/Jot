@@ -199,6 +199,28 @@ namespace Journal.ViewModels
             }
         }
 
+        private void RefreshSummaryMetrics()
+        {
+            ValidCount = AllEntries.Count;
+            ConflictedCount = AllEntries.Count(e => e.HasConflict);
+            TotalWords = AllEntries.Sum(e => e.WordCount);
+
+            if (AllEntries.Count > 0)
+            {
+                var minDate = AllEntries.Min(e => e.TargetDate).Date;
+                var maxDate = AllEntries.Max(e => e.TargetDate).Date;
+                DateRangeText = minDate == maxDate
+                    ? minDate.ToString("yyyy-MM-dd")
+                    : $"{minDate:yyyy-MM-dd} 至 {maxDate:yyyy-MM-dd}";
+            }
+            else
+            {
+                DateRangeText = "无有效日期";
+            }
+
+            UpdateSelectedCount();
+        }
+
         [RelayCommand]
         public async Task PickFilesAsync()
         {
@@ -288,7 +310,7 @@ namespace Journal.ViewModels
                 {
                     if (File.Exists(p))
                     {
-                        if (supportedExts.Contains(Path.GetExtension(p)))
+                        if (supportedExts.Contains(Path.GetExtension(p)) && !ImportService.IsIgnoredSystemOrBackupFile(p))
                         {
                             allFilePaths.Add(p);
                         }
@@ -296,7 +318,7 @@ namespace Journal.ViewModels
                     else if (Directory.Exists(p))
                     {
                         var dirFiles = Directory.EnumerateFiles(p, "*.*", enumOptions)
-                            .Where(f => supportedExts.Contains(Path.GetExtension(f)));
+                            .Where(f => supportedExts.Contains(Path.GetExtension(f)) && !ImportService.IsIgnoredSystemOrBackupFile(f));
                         allFilePaths.AddRange(dirFiles);
                     }
                 }
@@ -386,12 +408,7 @@ namespace Journal.ViewModels
             }
 
             TotalScannedCount = summary.TotalFilesScanned;
-            ValidCount = summary.ValidCount;
-            ConflictedCount = summary.ConflictedCount;
-            TotalWords = summary.TotalWords;
-            DateRangeText = summary.DateRangeText;
-
-            UpdateSelectedCount();
+            RefreshSummaryMetrics();
             UpdateAllSimulatedMergedContent(ConflictStrategy);
             ApplyFilter();
 
@@ -461,11 +478,12 @@ namespace Journal.ViewModels
                     entry.SimulatedMergedContent = entry.Content;
                 }
 
-                ConflictedCount = AllEntries.Count(e => e.HasConflict);
+                RefreshSummaryMetrics();
                 ApplyFilter();
 
                 if (SelectedEntry == entry)
                 {
+                    OnPropertyChanged(nameof(SelectedEntryHasConflict));
                     OnPropertyChanged(nameof(SelectedEntryExistingWords));
                     OnPropertyChanged(nameof(SelectedEntryMergedWords));
                 }
@@ -556,11 +574,7 @@ namespace Journal.ViewModels
                 SelectedEntry = FilteredEntries.FirstOrDefault();
             }
 
-            ValidCount = AllEntries.Count;
-            ConflictedCount = AllEntries.Count(e => e.HasConflict);
-            TotalWords = AllEntries.Sum(e => e.WordCount);
-            UpdateSelectedCount();
-
+            RefreshSummaryMetrics();
             StatusMessage = $"已从导入候选中移除 {entry.DateDisplay} 条目";
         }
 
@@ -587,11 +601,7 @@ namespace Journal.ViewModels
                 SelectedEntry = FilteredEntries.FirstOrDefault();
             }
 
-            ValidCount = AllEntries.Count;
-            ConflictedCount = AllEntries.Count(e => e.HasConflict);
-            TotalWords = AllEntries.Sum(e => e.WordCount);
-            UpdateSelectedCount();
-
+            RefreshSummaryMetrics();
             StatusMessage = $"已批量移除 {toRemove.Count} 篇已选条目";
         }
 
@@ -599,6 +609,12 @@ namespace Journal.ViewModels
         public async Task ImportSingleEntryAsync(ImportedEntryPreview? entry)
         {
             if (entry == null || IsImporting) return;
+
+            if (entry.HasConflict && ConflictStrategy == ImportConflictStrategy.Skip)
+            {
+                StatusMessage = $"跳过导入：{entry.DateDisplay} 本地已有记录，且当前策略为“跳过已有日期”";
+                return;
+            }
 
             IsImporting = true;
             StatusMessage = $"正在单独导入 {entry.DateDisplay} ...";
@@ -609,10 +625,10 @@ namespace Journal.ViewModels
                 if (success)
                 {
                     entry.IsSelected = false;
-                    UpdateSelectedCount();
+                    RefreshSummaryMetrics();
                     StatusMessage = $"成功导入 {entry.DateDisplay} 日记！已写入本地并同步索引";
-                    ConflictedCount = AllEntries.Count(e => e.HasConflict);
                     ApplyFilter();
+                    OnPropertyChanged(nameof(SelectedEntryHasConflict));
                     OnPropertyChanged(nameof(SelectedEntryExistingWords));
                     OnPropertyChanged(nameof(SelectedEntryMergedWords));
                 }
@@ -685,8 +701,9 @@ namespace Journal.ViewModels
 
                 StatusMessage = $"导入完成: 成功写入 {result.SuccessCount} 篇 (合并追加 {result.MergedCount} 篇, 覆盖 {result.OverwrittenCount} 篇, 跳过 {result.SkippedCount} 篇)";
 
-                ConflictedCount = AllEntries.Count(e => e.HasConflict);
+                RefreshSummaryMetrics();
                 ApplyFilter();
+                OnPropertyChanged(nameof(SelectedEntryHasConflict));
                 OnPropertyChanged(nameof(SelectedEntryExistingWords));
                 OnPropertyChanged(nameof(SelectedEntryMergedWords));
             }

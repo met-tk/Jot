@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Threading.Tasks;
+using CommunityToolkit.Mvvm.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Journal.Services;
 
@@ -9,6 +11,50 @@ namespace Journal
     public partial class App : Application
     {
         public static Window? MainWindowInstance { get; private set; }
+        public static IServiceProvider Services { get; } = CreateServiceProvider();
+
+        public static T GetService<T>() where T : class
+        {
+            return (Services.GetService(typeof(T)) as T)
+                ?? throw new InvalidOperationException($"Service {typeof(T).FullName} is not registered.");
+        }
+
+        private static IServiceProvider CreateServiceProvider()
+        {
+            var provider = new LightweightServiceProvider();
+            provider.Register<IDiaryStorageService>(DiaryStorageService.Instance);
+            provider.Register<DiaryStorageService>(DiaryStorageService.Instance);
+            provider.Register<IDiaryIndexService>(DiaryIndexService.Instance);
+            provider.Register<DiaryIndexService>(DiaryIndexService.Instance);
+            provider.Register<WordCloudAnalyzerService>(WordCloudAnalyzerService.Instance);
+            provider.Register<AppSettingsService>(AppSettingsService.Instance);
+            provider.Register<AgingEngineService>(AgingEngineService.Instance);
+            provider.Register<SoundEffectService>(SoundEffectService.Instance);
+
+            try
+            {
+                Ioc.Default.ConfigureServices(provider);
+            }
+            catch { }
+
+            return provider;
+        }
+
+        private sealed class LightweightServiceProvider : IServiceProvider
+        {
+            private readonly ConcurrentDictionary<Type, object> _services = new();
+
+            public void Register<T>(T instance) where T : class
+            {
+                _services[typeof(T)] = instance;
+            }
+
+            public object? GetService(Type serviceType)
+            {
+                return _services.TryGetValue(serviceType, out var instance) ? instance : null;
+            }
+        }
+
         private static readonly object s_crashLogLock = new();
         private const long MaxCrashLogBytes = 2 * 1024 * 1024; // 2MB 日志滚动上限
 

@@ -188,7 +188,7 @@ namespace Journal.Views
             normalIcon.Visibility = isSelected ? Visibility.Collapsed : Visibility.Visible;
         }
 
-        public void NavigateToEditor(DateTime date)
+        public void NavigateToEditor(DateTime date, string? searchKeyword = null)
         {
             _currentTag = "Today";
             UpdateNavVisualState("Today");
@@ -196,6 +196,11 @@ namespace Journal.Views
             if (!navigated && ContentFrame.Content is EditorPage page)
             {
                 _ = page.LoadDateExplicitlyAsync(date);
+            }
+
+            if (!string.IsNullOrWhiteSpace(searchKeyword) && ContentFrame.Content is EditorPage activeEditor)
+            {
+                activeEditor.OpenFindBarWithKeyword(searchKeyword);
             }
         }
 

@@ -80,20 +80,14 @@ namespace Journal.Services
 
         public async Task<string> GetPreprocessedInkTexturePathAsync(string? sourcePath)
         {
-            return await GetPreprocessedInkTexturePathAsync(sourcePath, isDarkMode: false);
-        }
-
-        public async Task<string> GetPreprocessedInkTexturePathAsync(string? sourcePath, bool isDarkMode)
-        {
             string resolvedPath = ResolveTexturePath(sourcePath, isPaper: false);
             if (!File.Exists(resolvedPath))
             {
                 throw new FileNotFoundException($"Ink texture file not found: {sourcePath}", sourcePath ?? string.Empty);
             }
 
-            string mode = isDarkMode ? "inv" : "gray";
-            return await _cacheService.GetOrCreateCachedFileAsync(resolvedPath, mode,
-                (src, dst) => Task.Run(() => ProcessTextureAsync(src, dst, invert: isDarkMode, autoLevels: false)));
+            return await _cacheService.GetOrCreateCachedFileAsync(resolvedPath, "gray",
+                (src, dst) => Task.Run(() => ProcessTextureAsync(src, dst, invert: false, autoLevels: false)));
         }
 
         // The grayscale cache remains the canonical preprocessing result. The second,
@@ -304,6 +298,7 @@ namespace Journal.Services
                 pixels[i] = pixels[i + 1] = pixels[i + 2] = premultiplied;
             }
         }
+
         public static string ResolveTexturePath(string? customPath, bool isPaper)
         {
             if (!string.IsNullOrWhiteSpace(customPath))

@@ -95,6 +95,10 @@ namespace Journal.Services
             string content,
             DateTime? fileTime = null)
         {
+            string cleanContent = !string.IsNullOrEmpty(content) && content[0] == '\uFEFF'
+                ? content.TrimStart('\uFEFF')
+                : (content ?? string.Empty);
+
             // 梯队 1：文件名匹配
             if (TryExtractDateFromString(Path.GetFileNameWithoutExtension(fileName), out var dateFromName))
             {
@@ -102,7 +106,7 @@ namespace Journal.Services
             }
 
             // 梯队 2：YAML Frontmatter 匹配
-            var fmMatch = RegexFrontmatterBlock.Match(content);
+            var fmMatch = RegexFrontmatterBlock.Match(cleanContent);
             if (fmMatch.Success)
             {
                 string yaml = fmMatch.Groups["yaml"].Value;
@@ -122,7 +126,7 @@ namespace Journal.Services
             }
 
             // 梯队 3：正文首行/次行 Markdown 标题
-            var headerMatch = RegexHeaderDate.Match(content);
+            var headerMatch = RegexHeaderDate.Match(cleanContent);
             if (headerMatch.Success)
             {
                 if (TryExtractDateFromString(headerMatch.Groups["val"].Value, out var dtHeader))
@@ -132,7 +136,7 @@ namespace Journal.Services
             }
 
             // 梯队 4：正文内方括号时间戳
-            var tsMatch = RegexTimestampDate.Match(content);
+            var tsMatch = RegexTimestampDate.Match(cleanContent);
             if (tsMatch.Success)
             {
                 if (TryExtractDateFromString(tsMatch.Groups["val"].Value, out var dtTs))
@@ -207,13 +211,29 @@ namespace Journal.Services
         #region 外部文件预检分析流水线
 
         /// <summary>
-        /// 批量扫描选中的文件路径（包含 .md, .txt, .json, .zip），构建导入预检预览模型
+        /// 判断文件名或路径是否属于应用内部备份、回收站或配置文件，防止误导入
         /// </summary>
-        public async Task<ImportPreviewSummary> ScanAndPreviewFilesAsync(IEnumerable<string> filePaths)
+        public static bool IsIgnoredSystemOrBackupFile(string pathOrEntryName)
         {
-            var warnings = new List<string>();
-            var sources = await LoadRawSourcesAsync(filePaths, warnings);
-            return await ProcessSourcesWithRuleAsync(sources, new CustomSplitRule { Preset = ImportSplitRulePreset.AutoDetection }, warnings);
+            if (string.IsNullOrWhiteSpace(pathOrEntryName)) return true;
+
+            string fileName = Path.GetFileName(pathOrEntryName);
+            if (fileName.EndsWith(".bak.md", StringComparison.OrdinalIgnoreCase) ||
+                fileName.EndsWith(".trash.md", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(fileName, "settings.json", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            string normalized = pathOrEntryName.Replace('\\', '/');
+            if (normalized.Contains("/Backups/", StringComparison.OrdinalIgnoreCase) ||
+                normalized.Contains("/Trash/", StringComparison.OrdinalIgnoreCase) ||
+                normalized.Contains("/AgingCache/", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -226,7 +246,7 @@ namespace Journal.Services
 
             foreach (var path in filePaths)
             {
-                if (!File.Exists(path)) continue;
+                if (!File.Exists(path) || IsIgnoredSystemOrBackupFile(path)) continue;
                 string ext = Path.GetExtension(path).ToLowerInvariant();
 
                 try
@@ -240,10 +260,11 @@ namespace Journal.Services
                             if (entry.Length == 0) continue;
                             string entryName = entry.FullName;
 
-                            // 排除系统临时垃圾文件
+                            // 排除系统临时垃圾文件与备份/回收站条目
                             if (entryName.Contains("__MACOSX", StringComparison.OrdinalIgnoreCase) ||
                                 entryName.EndsWith(".DS_Store", StringComparison.OrdinalIgnoreCase) ||
-                                entryName.EndsWith("Thumbs.db", StringComparison.OrdinalIgnoreCase))
+                                entryName.EndsWith("Thumbs.db", StringComparison.OrdinalIgnoreCase) ||
+                                IsIgnoredSystemOrBackupFile(entryName))
                             {
                                 continue;
                             }
@@ -333,18 +354,19 @@ namespace Journal.Services
             if (string.IsNullOrWhiteSpace(rawContent)) return segments;
 
             rule ??= new CustomSplitRule();
-            string content = StripFrontmatter(rawContent);
+            string cleanRaw = rawContent[0] == '\uFEFF' ? rawContent.TrimStart('\uFEFF') : rawContent;
+            string content = StripFrontmatter(cleanRaw);
 
             // 1. 规则为“不拆分”：直接作为整篇单日日记
             if (rule.Preset == ImportSplitRulePreset.NoSplit)
             {
-                var (dt, _, desc) = Instance.ExtractDate(fileName, rawContent, fileTime);
+                var (dt, _, desc) = Instance.ExtractDate(fileName, cleanRaw, fileTime);
                 string cleaned = content.Trim();
                 segments.Add((dt, cleaned, $"整篇导入 ({desc})"));
                 return segments;
             }
 
-            var lines = content.Replace("\r\n", "\n").Split('\n');
+            var lines = content.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
             var anchors = new List<(int LineIndex, DateTime Date, string TimestampTag, string RuleDesc)>();
 
             Regex? customRegex = null;
@@ -452,7 +474,7 @@ namespace Journal.Services
             // 若无匹配锚点，或在自动探测模式下少于 2 个不同日期，则作为整篇单日导入
             if (anchors.Count == 0 || (rule.Preset == ImportSplitRulePreset.AutoDetection && anchors.Select(a => a.Date).Distinct().Count() < 2))
             {
-                var (dt, _, desc) = Instance.ExtractDate(fileName, rawContent, fileTime);
+                var (dt, _, desc) = Instance.ExtractDate(fileName, cleanRaw, fileTime);
                 string cleaned = content.Trim();
                 if (anchors.Count == 1 && anchors[0].LineIndex == 0 && lines.Length > 1 && RegexHeaderDateLine.IsMatch(lines[0]))
                 {
@@ -536,7 +558,7 @@ namespace Journal.Services
 
             return segments.Count > 0
                 ? segments
-                : new() { (Instance.ExtractDate(fileName, rawContent, fileTime).Date, content.Trim(), "单篇导入") };
+                : new() { (Instance.ExtractDate(fileName, cleanRaw, fileTime).Date, content.Trim(), "单篇导入") };
         }
 
         private static bool TryExtractAnchorMatch(Match match, out DateTime detectedDate, out string timestampTag)
@@ -655,7 +677,11 @@ namespace Journal.Services
             string fileName,
             Dictionary<DateTime, ImportedEntryPreview> entries)
         {
-            using var doc = JsonDocument.Parse(jsonContent);
+            string cleanJson = !string.IsNullOrEmpty(jsonContent) && jsonContent[0] == '\uFEFF'
+                ? jsonContent.TrimStart('\uFEFF')
+                : jsonContent;
+
+            using var doc = JsonDocument.Parse(cleanJson);
             var root = doc.RootElement;
 
             if (root.ValueKind == JsonValueKind.Array)
@@ -765,11 +791,14 @@ namespace Journal.Services
                     ms.Write(buffer, 0, bytesRead);
                 }
 
-                if (ms.TryGetBuffer(out ArraySegment<byte> seg) && seg.Array != null)
+                ms.Position = 0;
+                using var reader = new StreamReader(ms, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
+                string decoded = await reader.ReadToEndAsync();
+                if (decoded.Length > 0 && decoded[0] == '\uFEFF')
                 {
-                    return (Encoding.UTF8.GetString(seg.Array, seg.Offset, seg.Count), totalRead);
+                    decoded = decoded.TrimStart('\uFEFF');
                 }
-                return (Encoding.UTF8.GetString(ms.ToArray()), totalRead);
+                return (decoded, totalRead);
             }
             finally
             {
@@ -871,18 +900,19 @@ namespace Journal.Services
                 return result;
             }
 
-            var savedItems = new List<(DateTime Date, string Content, string FullPath)>(total);
+            var savedItemsByDate = new Dictionary<DateTime, (DateTime Date, string Content, string FullPath)>(total);
 
             for (int i = 0; i < total; i++)
             {
                 var entry = targetEntries[i];
-                progress?.Report((i + 1, total, $"正在导入 {entry.TargetDate:yyyy-MM-dd} ..."));
+                var targetDate = entry.TargetDate.Date;
+                progress?.Report((i + 1, total, $"正在导入 {targetDate:yyyy-MM-dd} ..."));
 
                 try
                 {
-                    bool exists = DiaryStorageService.Instance.DiaryExists(entry.TargetDate);
+                    bool exists = DiaryStorageService.Instance.DiaryExists(targetDate);
                     string finalContent = entry.Content;
-                    string standardPath = DiaryStorageService.Instance.GetDiaryPath(entry.TargetDate);
+                    string standardPath = DiaryStorageService.Instance.GetDiaryPath(targetDate);
 
                     if (exists)
                     {
@@ -894,7 +924,7 @@ namespace Journal.Services
 
                         if (strategy == ImportConflictStrategy.MergeAppend)
                         {
-                            string oldContent = await DiaryStorageService.Instance.LoadDiaryContentAsync(entry.TargetDate);
+                            string oldContent = await DiaryStorageService.Instance.LoadDiaryContentAsync(targetDate);
                             finalContent = GenerateSimulatedMergedContent(oldContent, entry.Content, ImportConflictStrategy.MergeAppend, entry.TargetDate);
                             result.MergedCount++;
                         }
@@ -909,8 +939,8 @@ namespace Journal.Services
                     }
 
                     // 写入本地 Markdown 物理真理源
-                    await DiaryStorageService.Instance.SaveDiaryContentAsync(entry.TargetDate, finalContent);
-                    savedItems.Add((entry.TargetDate, finalContent, standardPath));
+                    await DiaryStorageService.Instance.SaveDiaryContentAsync(targetDate, finalContent);
+                    savedItemsByDate[targetDate] = (targetDate, finalContent, standardPath);
                     result.TotalWordsAdded += entry.WordCount;
                     entry.IsImported = true;
                     entry.HasConflict = true;
@@ -923,17 +953,17 @@ namespace Journal.Services
                 {
                     result.FailedCount++;
                     result.ErrorMessage = string.IsNullOrEmpty(result.ErrorMessage)
-                        ? $"{entry.TargetDate:yyyy-MM-dd}: {ex.Message}"
-                        : $"{result.ErrorMessage}; {entry.TargetDate:yyyy-MM-dd}: {ex.Message}";
-                    System.Diagnostics.Debug.WriteLine($"Failed to import entry {entry.TargetDate:yyyy-MM-dd}: {ex.Message}");
+                        ? $"{targetDate:yyyy-MM-dd}: {ex.Message}"
+                        : $"{result.ErrorMessage}; {targetDate:yyyy-MM-dd}: {ex.Message}";
+                    System.Diagnostics.Debug.WriteLine($"Failed to import entry {targetDate:yyyy-MM-dd}: {ex.Message}");
                 }
             }
 
             // 批量提交索引与通知界面（SyncDiariesBatchAsync 内部自动触发单次 NotifyDataChanged）
-            if (savedItems.Count > 0)
+            if (savedItemsByDate.Count > 0)
             {
                 progress?.Report((total, total, "正在同步本地数据库索引..."));
-                await DiaryIndexService.Instance.SyncDiariesBatchAsync(savedItems);
+                await DiaryIndexService.Instance.SyncDiariesBatchAsync(savedItemsByDate.Values);
             }
 
             result.Success = (result.FailedCount == 0);
@@ -951,27 +981,27 @@ namespace Journal.Services
 
             try
             {
-                bool exists = DiaryStorageService.Instance.DiaryExists(entry.TargetDate);
+                var targetDate = entry.TargetDate.Date;
+                bool exists = DiaryStorageService.Instance.DiaryExists(targetDate);
                 string finalContent = entry.Content;
-                string standardPath = DiaryStorageService.Instance.GetDiaryPath(entry.TargetDate);
+                string standardPath = DiaryStorageService.Instance.GetDiaryPath(targetDate);
 
                 if (exists)
                 {
                     if (strategy == ImportConflictStrategy.Skip)
                     {
-                        entry.IsImported = true;
-                        return true;
+                        return false;
                     }
 
                     if (strategy == ImportConflictStrategy.MergeAppend)
                     {
-                        string oldContent = await DiaryStorageService.Instance.LoadDiaryContentAsync(entry.TargetDate);
+                        string oldContent = await DiaryStorageService.Instance.LoadDiaryContentAsync(targetDate);
                         finalContent = GenerateSimulatedMergedContent(oldContent, entry.Content, ImportConflictStrategy.MergeAppend, entry.TargetDate);
                     }
                 }
 
-                await DiaryStorageService.Instance.SaveDiaryContentAsync(entry.TargetDate, finalContent);
-                await DiaryIndexService.Instance.SyncDiariesBatchAsync(new[] { (entry.TargetDate, finalContent, standardPath) });
+                await DiaryStorageService.Instance.SaveDiaryContentAsync(targetDate, finalContent);
+                await DiaryIndexService.Instance.SyncDiariesBatchAsync(new[] { (targetDate, finalContent, standardPath) });
 
                 entry.IsImported = true;
                 entry.HasConflict = true;

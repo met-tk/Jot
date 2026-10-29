@@ -11,6 +11,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Windows.Storage.Pickers;
 using Journal.Common;
+using Journal.Controls;
 using Journal.Models;
 using Journal.Services;
 using Journal.ViewModels;
@@ -21,6 +22,7 @@ namespace Journal.Views
     {
         public DiaryListViewModel ViewModel { get; } = new();
         private DateTime? _selectedAuxDate;
+        private readonly AuxiliaryCalendarStyler _auxCalendarStyler = new();
 
         public DiaryListPage()
         {
@@ -31,6 +33,8 @@ namespace Journal.Views
             {
                 this.SizeChanged -= Page_SizeChanged;
                 this.SizeChanged += Page_SizeChanged;
+                ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+                ViewModel.PropertyChanged += OnViewModelPropertyChanged;
                 AmbianceThemeEngine.AmbiancePaletteChanged -= OnAmbiancePaletteChanged;
                 AmbianceThemeEngine.AmbiancePaletteChanged += OnAmbiancePaletteChanged;
                 ViewModel.Subscribe();
@@ -41,14 +45,31 @@ namespace Journal.Views
             this.Unloaded += (s, e) =>
             {
                 this.SizeChanged -= Page_SizeChanged;
+                ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
                 AmbianceThemeEngine.AmbiancePaletteChanged -= OnAmbiancePaletteChanged;
                 _highlightCts?.Cancel();
                 _highlightCts?.Dispose();
                 _highlightCts = null;
-                _realizedDayItems.Clear();
+                _auxCalendarStyler.Clear();
                 _cardElementMap.Clear();
                 ViewModel.Unsubscribe();
             };
+        }
+
+        private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(ViewModel.SearchKeyword) ||
+                e.PropertyName == nameof(ViewModel.ReadingDiaryContent) ||
+                e.PropertyName == nameof(ViewModel.ReadingDiaryTitle))
+            {
+                DispatcherQueue?.TryEnqueue(() =>
+                {
+                    if (ViewModel.IsReadingDay)
+                    {
+                        ApplyReadingSearchHighlight();
+                    }
+                });
+            }
         }
 
         public Task<bool> TryHandleNavigateBackAsync()
@@ -98,18 +119,22 @@ namespace Journal.Views
             var point = e.GetCurrentPoint(sender as UIElement);
             if (!point.Properties.IsLeftButtonPressed) return;
 
-            if (sender is FrameworkElement elem && elem.DataContext is DiaryCardItem card)
+            if (sender is FrameworkElement elem)
             {
-                e.Handled = true;
-                if (ViewModel.IsMultiSelectMode)
+                var card = elem.Tag as DiaryCardItem ?? elem.DataContext as DiaryCardItem;
+                if (card != null)
                 {
-                    card.IsSelected = !card.IsSelected;
-                }
-                else
-                {
-                    await ViewModel.OpenReadingDayAsync(card);
-                    SyncAuxiliaryCalendarToDate(card.Date);
-                    ApplyReadingSearchHighlight();
+                    e.Handled = true;
+                    if (ViewModel.IsMultiSelectMode)
+                    {
+                        card.IsSelected = !card.IsSelected;
+                    }
+                    else
+                    {
+                        await ViewModel.OpenReadingDayAsync(card);
+                        SyncAuxiliaryCalendarToDate(card.Date);
+                        ApplyReadingSearchHighlight();
+                    }
                 }
             }
         }
@@ -132,7 +157,7 @@ namespace Journal.Views
         {
             if (ViewModel.ReadingCard != null)
             {
-                ShellPage.Current?.NavigateToEditor(ViewModel.ReadingCard.Date);
+                ShellPage.Current?.NavigateToEditor(ViewModel.ReadingCard.Date, ViewModel.SearchKeyword?.Trim());
             }
         }
 
@@ -141,7 +166,7 @@ namespace Journal.Views
             if (ViewModel.IsReadingDay && ViewModel.ReadingCard != null)
             {
                 args.Handled = true;
-                ShellPage.Current?.NavigateToEditor(ViewModel.ReadingCard.Date);
+                ShellPage.Current?.NavigateToEditor(ViewModel.ReadingCard.Date, ViewModel.SearchKeyword?.Trim());
             }
         }
 
@@ -182,7 +207,19 @@ namespace Journal.Views
         {
             if (sender is FrameworkElement fe)
             {
-                _lastContextCard = fe.DataContext as DiaryCardItem ?? fe.Tag as DiaryCardItem;
+                _lastContextCard = fe.Tag as DiaryCardItem ?? fe.DataContext as DiaryCardItem;
+                if (_lastContextCard != null && SharedCardContextFlyout != null)
+                {
+                    if (args.TryGetPosition(fe, out var point))
+                    {
+                        SharedCardContextFlyout.ShowAt(fe, point);
+                    }
+                    else
+                    {
+                        SharedCardContextFlyout.ShowAt(fe);
+                    }
+                    args.Handled = true;
+                }
             }
         }
 
@@ -220,7 +257,7 @@ namespace Journal.Views
             var card = GetCardFromSender(sender);
             if (card != null)
             {
-                ShellPage.Current?.NavigateToEditor(card.Date);
+                ShellPage.Current?.NavigateToEditor(card.Date, ViewModel.SearchKeyword?.Trim());
             }
         }
 
@@ -481,9 +518,6 @@ namespace Journal.Views
 
         #region 辅助迷你日历联动
 
-        private static SolidColorBrush? ActiveDayBgBrush => AmbianceThemeEngine.ActiveCalendarDayBackgroundBrush;
-        private static SolidColorBrush? ActiveDayRingBrush => AmbianceThemeEngine.ActiveCalendarDayRingBrush;
-        private readonly Dictionary<DateTime, CalendarViewDayItem> _realizedDayItems = new();
         private bool _isSyncingAuxCalendar = false;
 
         private void OnAmbiancePaletteChanged()
@@ -495,41 +529,13 @@ namespace Journal.Views
             });
         }
 
-        private static void ApplyCalendarDayItemStyle(CalendarViewDayItem item, bool hasDiary)
-        {
-            try
-            {
-                item.SetDensityColors(null);
-                if (hasDiary)
-                {
-                    item.Background = ActiveDayBgBrush;
-                    item.BorderBrush = ActiveDayRingBrush;
-                    item.BorderThickness = new Thickness(1.5);
-                    item.CornerRadius = new CornerRadius(20);
-                }
-                else
-                {
-                    item.ClearValue(Control.BackgroundProperty);
-                    item.ClearValue(Control.BorderBrushProperty);
-                    item.ClearValue(Control.BorderThicknessProperty);
-                }
-            }
-            catch { }
-        }
-
         private void RefreshAuxiliaryCalendar()
         {
             if (AuxiliaryCalendarView == null || !this.IsLoaded) return;
 
             try
             {
-                foreach (var kvp in _realizedDayItems.ToList())
-                {
-                    if (kvp.Value != null)
-                    {
-                        ApplyCalendarDayItemStyle(kvp.Value, ViewModel.ActiveDates.Contains(kvp.Key));
-                    }
-                }
+                _auxCalendarStyler.Refresh(ViewModel.ActiveDates);
 
                 if (ViewModel.IsReadingDay && ViewModel.ReadingCard != null)
                 {
@@ -537,7 +543,11 @@ namespace Journal.Views
                 }
                 else if (!_selectedAuxDate.HasValue && ViewModel.Groups.Count > 0 && ViewModel.Groups[0].Entries.Count > 0)
                 {
-                    AuxiliaryCalendarView.SetDisplayDate(ViewModel.Groups[0].Entries[0].Date);
+                    var latestDate = ViewModel.Groups[0].Entries[0].Date.Date;
+                    if (latestDate >= AuxiliaryCalendarView.MinDate.DateTime && latestDate <= AuxiliaryCalendarView.MaxDate.DateTime)
+                    {
+                        AuxiliaryCalendarView.SetDisplayDate(latestDate);
+                    }
                 }
             }
             catch { }
@@ -551,9 +561,12 @@ namespace Journal.Views
                 _isSyncingAuxCalendar = true;
                 var target = date.Date;
                 _selectedAuxDate = target;
-                AuxiliaryCalendarView.SetDisplayDate(target);
-                AuxiliaryCalendarView.SelectedDates.Clear();
-                AuxiliaryCalendarView.SelectedDates.Add(new DateTimeOffset(target));
+                if (target >= AuxiliaryCalendarView.MinDate.DateTime && target <= AuxiliaryCalendarView.MaxDate.DateTime)
+                {
+                    AuxiliaryCalendarView.SetDisplayDate(target);
+                    AuxiliaryCalendarView.SelectedDates.Clear();
+                    AuxiliaryCalendarView.SelectedDates.Add(new DateTimeOffset(target));
+                }
 
                 if (ViewModel.ActiveDates.Contains(target))
                 {
@@ -577,101 +590,92 @@ namespace Journal.Views
 
         private void AuxiliaryCalendarView_DayItemChanging(CalendarView sender, CalendarViewDayItemChangingEventArgs args)
         {
-            if (args.Item == null) return;
-
-            if (args.InRecycleQueue)
-            {
-                var staleKeys = _realizedDayItems
-                    .Where(kv => ReferenceEquals(kv.Value, args.Item))
-                    .Select(kv => kv.Key)
-                    .ToList();
-                foreach (var key in staleKeys)
-                {
-                    _realizedDayItems.Remove(key);
-                }
-                return;
-            }
-
-            if (args.Phase == 0)
-            {
-                // 清理该容器先前复用的旧日期映射
-                var oldKeys = _realizedDayItems
-                    .Where(kv => ReferenceEquals(kv.Value, args.Item))
-                    .Select(kv => kv.Key)
-                    .ToList();
-                foreach (var key in oldKeys)
-                {
-                    _realizedDayItems.Remove(key);
-                }
-
-                var itemDate = args.Item.Date.Date;
-                _realizedDayItems[itemDate] = args.Item;
-                ApplyCalendarDayItemStyle(args.Item, ViewModel.ActiveDates.Contains(itemDate));
-            }
+            _auxCalendarStyler.HandleDayItemChanging(args, ViewModel.ActiveDates);
         }
 
         private readonly Dictionary<string, FrameworkElement> _cardElementMap = new();
 
+        private void DiaryCardRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
+        {
+            if (args.Element is FrameworkElement elem)
+            {
+                BindAndHighlightCardElement(elem);
+            }
+        }
+
+        private void DiaryCardRepeater_ElementClearing(ItemsRepeater sender, ItemsRepeaterElementClearingEventArgs args)
+        {
+            if (args.Element is FrameworkElement elem)
+            {
+                UnregisterCardElement(elem);
+            }
+        }
+
         private void DiaryCard_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement elem)
+            {
+                BindAndHighlightCardElement(elem);
+            }
+        }
+
+        private void DiaryCard_Unloaded(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement elem)
+            {
+                UnregisterCardElement(elem);
+            }
+        }
+
+        private void BindAndHighlightCardElement(FrameworkElement elem)
         {
             try
             {
-                if (sender is FrameworkElement elem)
+                var card = elem.Tag as DiaryCardItem;
+                if (card == null)
                 {
-                    var card = elem.Tag as DiaryCardItem;
-                    if (card == null)
-                    {
-                        try { card = elem.DataContext as DiaryCardItem; } catch { }
-                    }
+                    try { card = elem.DataContext as DiaryCardItem; } catch { }
+                }
 
-                    if (card != null)
+                if (card != null)
+                {
+                    _cardElementMap[card.Id] = elem;
+                    string? kw = card.HighlightKeyword ?? ViewModel.SearchKeyword?.Trim();
+                    if (elem.FindName("CardTitleText") is TextBlock titleTb)
                     {
-                        _cardElementMap[card.Id] = elem;
-                        string? kw = card.HighlightKeyword ?? ViewModel.SearchKeyword?.Trim();
-                        if (elem.FindName("CardTitleText") is TextBlock titleTb)
-                        {
-                            AnalyticsPage.ApplyTextHighlight(titleTb, card.Title, kw);
-                        }
-                        if (elem.FindName("CardExcerptText") is TextBlock excerptTb)
-                        {
-                            AnalyticsPage.ApplyTextHighlight(excerptTb, card.Excerpt, kw);
-                        }
+                        AnalyticsPage.ApplyTextHighlight(titleTb, card.Title, kw);
+                    }
+                    if (elem.FindName("CardExcerptText") is TextBlock excerptTb)
+                    {
+                        AnalyticsPage.ApplyTextHighlight(excerptTb, card.Excerpt, kw);
                     }
                 }
             }
             catch { }
         }
 
-        private void DiaryCard_Unloaded(object sender, RoutedEventArgs e)
+        private void UnregisterCardElement(FrameworkElement elem)
         {
             try
             {
-                if (sender is FrameworkElement elem)
+                var card = elem.Tag as DiaryCardItem;
+                if (card != null)
                 {
-                    // 优先从 Tag (托管强类型对象) 获取，绝不在 XAML 树卸载撕裂时冒进访问可能抛出 COMException (0x80004005) 的 DataContext
-                    var card = elem.Tag as DiaryCardItem;
-                    if (card != null)
+                    _cardElementMap.Remove(card.Id);
+                }
+                else
+                {
+                    foreach (var kvp in _cardElementMap)
                     {
-                        _cardElementMap.Remove(card.Id);
-                    }
-                    else
-                    {
-                        // 若无法直接获取 card，遍历字典安全移除元素引用
-                        foreach (var kvp in _cardElementMap)
+                        if (ReferenceEquals(kvp.Value, elem))
                         {
-                            if (ReferenceEquals(kvp.Value, elem))
-                            {
-                                _cardElementMap.Remove(kvp.Key);
-                                break;
-                            }
+                            _cardElementMap.Remove(kvp.Key);
+                            break;
                         }
                     }
                 }
             }
-            catch
-            {
-                // 卸载期间吞掉任何非托管 COM 异常，彻底杜绝向 Native ABI 冒泡
-            }
+            catch { }
         }
 
         private async void AuxiliaryCalendarView_SelectedDatesChanged(CalendarView sender, CalendarViewSelectedDatesChangedEventArgs args)
@@ -738,10 +742,16 @@ namespace Journal.Views
             }
 
             DiaryCardItem? matchedCard = null;
-            foreach (var group in ViewModel.Groups)
+            int matchedGroupIndex = -1;
+            for (int gIdx = 0; gIdx < ViewModel.Groups.Count; gIdx++)
             {
+                var group = ViewModel.Groups[gIdx];
                 matchedCard = group.Entries.FirstOrDefault(e => e.Date.Date == targetDate.Date);
-                if (matchedCard != null) break;
+                if (matchedCard != null)
+                {
+                    matchedGroupIndex = gIdx;
+                    break;
+                }
             }
 
             if (matchedCard != null)
@@ -756,6 +766,19 @@ namespace Journal.Views
                         {
                             AnimationDesired = true,
                             VerticalAlignmentRatio = 0.3
+                        });
+                    }
+                    catch { }
+                }
+                else if (matchedGroupIndex >= 0 && GroupsRepeater != null)
+                {
+                    try
+                    {
+                        var groupElem = GroupsRepeater.GetOrCreateElement(matchedGroupIndex);
+                        groupElem?.StartBringIntoView(new BringIntoViewOptions
+                        {
+                            AnimationDesired = true,
+                            VerticalAlignmentRatio = 0.2
                         });
                     }
                     catch { }

@@ -1,20 +1,23 @@
+using System;
 using System.Numerics;
+using System.Threading.Tasks;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.UI.Composition;
+using Microsoft.Graphics.DirectX;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Hosting;
 using Windows.Foundation;
-using Microsoft.Graphics.DirectX;
 
 namespace Journal.Services;
 
 // Redirect the ONE native editor visual through an alpha mask at all times.
 // Focus, typing and IME still belong to RichEditBox; no parallel text layout,
 // per-keystroke bitmap capture, or focus-dependent renderer switch is involved.
-internal sealed class InkWeatheringRenderer
+internal sealed class InkWeatheringRenderer : IDisposable
 {
     private readonly FrameworkElement _editor;
+    private readonly FrameworkElement _host;
     private readonly Compositor _compositor;
     private readonly CanvasDevice _device;
     private readonly CompositionGraphicsDevice _graphics;
@@ -29,12 +32,14 @@ internal sealed class InkWeatheringRenderer
     private float _strength;
     private double _offset;
     private XamlRoot? _xamlRoot;
+    private bool _isDisposed;
 
-    public bool HasTexture => _texture != null;
+    public bool HasTexture => !_isDisposed && _texture != null;
 
     public InkWeatheringRenderer(FrameworkElement editor, FrameworkElement host)
     {
         _editor = editor;
+        _host = host;
         var nativeVisual = ElementCompositionPreview.GetElementVisual(editor);
         _compositor = nativeVisual.Compositor;
         _device = CanvasDevice.GetSharedDevice();
@@ -44,6 +49,8 @@ internal sealed class InkWeatheringRenderer
         using (var drawing = CanvasComposition.CreateDrawingSession(_wearSurface))
             drawing.Clear(Microsoft.UI.Colors.Transparent);
         _wearBrush = _compositor.CreateSurfaceBrush(_wearSurface);
+        // 必须保持 Fill：当今日日记免老化（_texture == null）时，1x1 透明 _wearSurface 需铺满整个视口，
+        // 否则 AlphaMaskEffect 的有效边界会坍缩为左上角 1x1 像素导致编辑器正文被裁切隐藏。
         _wearBrush.Stretch = CompositionStretch.Fill;
 
         _editorSurface = _compositor.CreateVisualSurface();
@@ -63,18 +70,36 @@ internal sealed class InkWeatheringRenderer
         // the same redirection pattern used by WinUI Gallery's OpacityMaskView.
         nativeVisual.Opacity = 0;
 
-        editor.SizeChanged += (_, _) => DrawTexture();
-        editor.Loaded += (_, _) =>
+        editor.SizeChanged += OnEditorSizeChanged;
+        editor.Loaded += OnEditorLoaded;
+        editor.Unloaded += OnEditorUnloaded;
+    }
+
+    private void OnEditorSizeChanged(object sender, SizeChangedEventArgs e) => DrawTexture();
+
+    private void OnEditorLoaded(object sender, RoutedEventArgs e)
+    {
+        if (_isDisposed) return;
+        if (_xamlRoot != null)
         {
-            _xamlRoot = editor.XamlRoot;
-            if (_xamlRoot != null) _xamlRoot.Changed += RootChanged;
-            DrawTexture();
-        };
-        editor.Unloaded += (_, _) =>
+            _xamlRoot.Changed -= RootChanged;
+        }
+        _xamlRoot = _editor.XamlRoot;
+        if (_xamlRoot != null)
         {
-            if (_xamlRoot != null) _xamlRoot.Changed -= RootChanged;
+            _xamlRoot.Changed -= RootChanged;
+            _xamlRoot.Changed += RootChanged;
+        }
+        DrawTexture();
+    }
+
+    private void OnEditorUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (_xamlRoot != null)
+        {
+            _xamlRoot.Changed -= RootChanged;
             _xamlRoot = null;
-        };
+        }
     }
 
     private CompositionEffectBrush CreateEffect(bool dark)
@@ -91,6 +116,8 @@ internal sealed class InkWeatheringRenderer
 
     public void SetAppearance(double strength, bool dark)
     {
+        if (_isDisposed) return;
+        float prevStrength = _strength;
         _strength = (float)Math.Clamp(strength, 0, 1);
         if (_dark != dark)
         {
@@ -101,7 +128,15 @@ internal sealed class InkWeatheringRenderer
             _dark = dark;
             old.Dispose();
         }
-        else _effect.Properties.InsertScalar("Erosion.Opacity", _strength);
+        else
+        {
+            _effect.Properties.InsertScalar("Erosion.Opacity", _strength);
+        }
+
+        if (prevStrength <= 0.0001f && _strength > 0.0001f && _texture != null)
+        {
+            DrawTexture();
+        }
     }
 
     public async Task<CanvasBitmap> LoadTextureAsync(string path)
@@ -109,6 +144,11 @@ internal sealed class InkWeatheringRenderer
 
     public void SetTexture(CanvasBitmap texture)
     {
+        if (_isDisposed)
+        {
+            texture.Dispose();
+            return;
+        }
         var old = _texture;
         _texture = texture;
         DrawTexture();
@@ -117,8 +157,10 @@ internal sealed class InkWeatheringRenderer
 
     public void SetScrollOffset(double offset)
     {
-        if (Math.Abs(_offset - offset) < 0.01) return;
+        if (_isDisposed || Math.Abs(_offset - offset) < 0.01) return;
         _offset = offset;
+        // 当日日记（免老化，_strength == 0）滚动时无需重绘磨损贴图表面
+        if (_strength <= 0.0001f || _texture == null) return;
         DrawTexture();
     }
 
@@ -126,15 +168,53 @@ internal sealed class InkWeatheringRenderer
 
     private void DrawTexture()
     {
-        if (_texture == null || _editor.ActualWidth <= 0 || _editor.ActualHeight <= 0) return;
-        double scale = _editor.XamlRoot?.RasterizationScale ?? 1;
-        var size = new Size(Math.Ceiling(_editor.ActualWidth * scale), Math.Ceiling(_editor.ActualHeight * scale));
-        if (_wearSurface.Size != size)
-            _wearSurface.Resize(new Windows.Graphics.SizeInt32((int)size.Width, (int)size.Height));
-        using var drawing = CanvasComposition.CreateDrawingSession(_wearSurface);
-        drawing.Clear(Microsoft.UI.Colors.Transparent);
-        drawing.Transform = Matrix3x2.CreateScale((float)scale);
-        using var tile = InkWeatheringEffect.CreateTileBrush(_device, _texture, _offset);
-        drawing.FillRectangle(new Rect(0, 0, _editor.ActualWidth, _editor.ActualHeight), tile);
+        if (_isDisposed || _texture == null || _editor.ActualWidth <= 0 || _editor.ActualHeight <= 0) return;
+        try
+        {
+            double scale = Math.Max(0.1, _editor.XamlRoot?.RasterizationScale ?? 1.0);
+            var size = new Size(
+                Math.Max(1, Math.Ceiling(_editor.ActualWidth * scale)),
+                Math.Max(1, Math.Ceiling(_editor.ActualHeight * scale)));
+            if (_wearSurface.Size != size)
+                _wearSurface.Resize(new Windows.Graphics.SizeInt32((int)size.Width, (int)size.Height));
+            using var drawing = CanvasComposition.CreateDrawingSession(_wearSurface);
+            drawing.Clear(Microsoft.UI.Colors.Transparent);
+            drawing.Transform = Matrix3x2.CreateScale((float)scale);
+            using var tile = InkWeatheringEffect.CreateTileBrush(_device, _texture, _offset);
+            drawing.FillRectangle(new Rect(0, 0, _editor.ActualWidth, _editor.ActualHeight), tile);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[InkWeatheringRenderer.DrawTexture] {ex.Message}");
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_isDisposed) return;
+        _isDisposed = true;
+
+        try
+        {
+            _editor.SizeChanged -= OnEditorSizeChanged;
+            _editor.Loaded -= OnEditorLoaded;
+            _editor.Unloaded -= OnEditorUnloaded;
+            if (_xamlRoot != null)
+            {
+                _xamlRoot.Changed -= RootChanged;
+                _xamlRoot = null;
+            }
+        }
+        catch { }
+
+        try { ElementCompositionPreview.SetElementChildVisual(_host, null); } catch { }
+        try { _output.Dispose(); } catch { }
+        try { _effect.Dispose(); } catch { }
+        try { _editorBrush.Dispose(); } catch { }
+        try { _editorSurface.Dispose(); } catch { }
+        try { _wearBrush.Dispose(); } catch { }
+        try { _wearSurface.Dispose(); } catch { }
+        try { _texture?.Dispose(); _texture = null; } catch { }
+        try { _graphics.Dispose(); } catch { }
     }
 }

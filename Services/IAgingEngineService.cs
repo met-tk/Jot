@@ -43,14 +43,6 @@ namespace Journal.Services
         /// <returns>去色处理后的本地缓存文件绝对路径</returns>
         Task<string> GetPreprocessedInkTexturePathAsync(string? sourcePath);
 
-        /// <summary>
-        /// 异步获取/预处理字迹风化纹理磁盘缓存路径（支持深色模式反相）
-        /// </summary>
-        /// <param name="sourcePath">自定义或默认风化纹理文件物理路径</param>
-        /// <param name="isDarkMode">当前是否处于暗黑主题</param>
-        /// <returns>处理后用于 XAML / DirectComposition 绑定的本地缓存文件绝对路径</returns>
-        Task<string> GetPreprocessedInkTexturePathAsync(string? sourcePath, bool isDarkMode);
-
         /// <summary>获取由灰度纹理派生的透明字迹风化遮罩。</summary>
         Task<string> GetInkWeatheringMaskPathAsync(string? sourcePath);
 
@@ -68,6 +60,5 @@ namespace Journal.Services
         /// 更新当前正在查看的日记日期并通知全软件底色层
         /// </summary>
         void SetCurrentViewingDate(DateTime date);
-
     }
 }
